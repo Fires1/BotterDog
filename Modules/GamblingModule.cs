@@ -3,13 +3,8 @@ using Discord.Interactions;
 using Discord.WebSocket;
 using System;
 using System.Threading.Tasks;
-using System.Linq;
-using Microsoft.Extensions.DependencyInjection;
 using FiresStuff.Services;
-using System.Diagnostics;
-using System.Runtime.InteropServices;
 using BotterDog.Services;
-using System.Collections.Generic;
 using BotterDog.Entities;
 
 namespace FiresStuff.Modules
@@ -75,7 +70,22 @@ namespace FiresStuff.Modules
 
                 _accounts.Save();
                 await RespondAsync($"{Context.User.Mention}, you've given {user.Mention} **${amt}** doggy dawg bucks.");
+                await _botLog.BotLogAsync(BotLogSeverity.Good, "Money given", $"{Context.User.Username} gave {user.Username} ${amt} doggie bucks.");
             }
+        }
+
+        [SlashCommand("setbalance", "ADMINONLY")]
+        [RequireOwner]
+        public async Task SetBalance(IGuildUser user, decimal amount)
+        {
+            var amt = decimal.Round(amount, 2);
+
+            var target = _accounts.FindOrCreate(user.Id);
+            target.Value.Balance = amt;
+
+            _accounts.Save();
+            await RespondAsync($"Set {user.Mention}'s balance to {amt}.", ephemeral: true);
+            await _botLog.BotLogAsync(BotLogSeverity.Bad, "BALANCE SET", $"{Context.User.Username} set {user.Username} balance to ${amt} doggie bucks.");
         }
 
         #endregion
@@ -87,6 +97,11 @@ namespace FiresStuff.Modules
         public async Task Roulette(decimal Bet)
         {
             var accnt = _accounts.FindOrCreate(Context.User.Id);
+
+            if(Bet > accnt.Value.Balance)
+            {
+                await RespondAsync("You do not have enough money to make the starter bet, therefore you are too broke to start this game.", ephemeral: true);
+            }
 
             var game = new GamblingState(Context.User.Id, GameType.Roulette, Bet);
 
@@ -117,6 +132,8 @@ namespace FiresStuff.Modules
             var builder = new ComponentBuilder().WithRows(new[] { ar, ar2, ar3 });
 
             await RespondAsync("", embed: emb.Build(),  components: builder.Build());
+
+            //Get message really quick and update our Ids
             var response = await GetOriginalResponseAsync();
             game.Guild = Context.Guild.Id;
             game.Channel = Context.Channel.Id;

@@ -19,7 +19,6 @@ namespace BotterDog.Services
         public AccountService(BotLogService botlog)
         {
             _botLog = botlog;
-            Load();
         }
 
         public Result<DogAccount> CreateAccount(ulong id, decimal startingBalance = 100)
@@ -32,7 +31,7 @@ namespace BotterDog.Services
             }
             else
             {
-                _botLog.BotLogAsync(BotLogSeverity.Good, "New account", $"New account created: {id}");
+                _botLog.BotLogAsync(BotLogSeverity.Good, "New account", $"New account created: <@{id}>");
                 var newAccnt = new DogAccount(id, startingBalance);
                 Accounts.Add(newAccnt);
                 Save(); //TODO: handle result
@@ -75,10 +74,12 @@ namespace BotterDog.Services
             try
             {
                 Accounts = JsonConvert.DeserializeObject<List<DogAccount>>(File.ReadAllText("accounts.json"));
+                _botLog.BotLogAsync(BotLogSeverity.Good, "Accounts loaded", "Accounts loaded successfully.");
                 return Result.Success();
             }
             catch (Exception e)
             {
+                _botLog.BotLogAsync(BotLogSeverity.Bad, "Load failure", "Failure while loading occured:", true, e.Message);
                 return Result.Failure(e.Message);
             }
         }
@@ -88,10 +89,12 @@ namespace BotterDog.Services
             try
             {
                 File.WriteAllText("accounts.json", JsonConvert.SerializeObject(Accounts));
+                _botLog.BotLogAsync(BotLogSeverity.Good, "Accounts saved", "Accounts saved succesfuly.");
                 return Result.Success();
             }
             catch (Exception e)
             {
+                _botLog.BotLogAsync(BotLogSeverity.Bad, "Save failure", "Failure while saving occured:", true, e.Message);
                 return Result.Failure(e.Message);
             }
         }

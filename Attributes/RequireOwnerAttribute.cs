@@ -1,15 +1,13 @@
 ﻿using Discord;
 using Discord.Interactions;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace FiresStuff.Attributes
 {
     public class RequireOwnerAttribute : PreconditionAttribute
     {
+        //Simple precondition for checking if me (sam) is running the command
         public override async Task<PreconditionResult> CheckRequirementsAsync(IInteractionContext context, ICommandInfo commandInfo, IServiceProvider services)
         {
             switch (context.Client.TokenType)

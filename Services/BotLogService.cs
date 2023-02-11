@@ -1,6 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Text;
 using System.Threading.Tasks;
 using Discord;
 using Discord.WebSocket;
@@ -24,7 +22,7 @@ namespace FiresStuff.Services
         /// Logs utilizing the bot, inside a specific channel within my server.
         /// </summary>
         /// <param name="message">Content to log</param>
-        public async Task BotLogAsync(BotLogSeverity severity, string title, string message, params string[] other)
+        public async Task BotLogAsync(BotLogSeverity severity, string title, string message, bool pingSam = false,  params string[] other)
         {
             var guild = _client.GetGuild(_logGuild);
             var channel = guild.GetTextChannel(_logChannel);
@@ -49,7 +47,14 @@ namespace FiresStuff.Services
                 .WithColor(color)
                 .WithCurrentTimestamp();
 
-            await channel.SendMessageAsync(embed: embed.Build());
+            if (pingSam)
+            {
+                await channel.SendMessageAsync("<@131182268021604352>", embed: embed.Build());
+            }
+            else
+            {
+                await channel.SendMessageAsync(embed: embed.Build());
+            }
         }
     }
 

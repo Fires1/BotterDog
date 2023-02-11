@@ -2,6 +2,7 @@
 using Discord;
 using Discord.Rest;
 using Discord.WebSocket;
+using FiresStuff.Services;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -13,18 +14,33 @@ namespace BotterDog.Services
 {
     public class BankService
     {
+        /// <summary>
+        /// Active games
+        /// </summary>
         public List<GamblingState> Games { get; set; }
-        public List<GameTimer> Timers { get; set; }
-        public List<GamblingState> FinishedGames { get; set; }
-        private readonly DiscordSocketClient _client;
 
+        /// <summary>
+        /// Timers, used for delayed payout
+        /// </summary>
+        public List<GameTimer> Timers { get; set; }
+
+        /// <summary>
+        /// Historical log of played games
+        /// </summary>
+        public List<GamblingState> FinishedGames { get; set; }
+
+
+        private readonly DiscordSocketClient _client;
+        private readonly BotLogService _botLog;
         private readonly Random _random;
 
 
-        public BankService(DiscordSocketClient client)
+        public BankService(DiscordSocketClient client, BotLogService botlog)
         {
             _client = client;
+            _botLog = botlog;
 
+            //Link events
             _client.ModalSubmitted += RouletteModalSubmitted;
             _client.ButtonExecuted += RouletteButtonExecuted;
 
@@ -35,106 +51,9 @@ namespace BotterDog.Services
             Timers = new List<GameTimer>();
         }
 
-        public async void Payout(GamblingState game, SocketMessageComponent msg)
-        {
-            switch(game.GameType)
-            {
-                case GameType.Roulette:
-                    var result = _fullBoard[_random.Next(0, _fullBoard.Length)];
-                    await msg.DeleteOriginalResponseAsync();
-
-                    var winningBets = new List<Bet>();
-
-                    foreach(var bet in game.Bets)
-                    {
-                        if(bet.Hits.Contains(result))
-                        {
-                            winningBets.Add(bet);
-                        }
-                    }
-
-
-                    var textcolor = "Red";
-                    var embedColor = new Color(255, 0, 0);
-                    if (_blacks.Contains(result))
-                    {
-                        textcolor = "Black";
-                        embedColor = new Color(0, 0, 0);
-                    }
-
-                    var formattedResult = result.ToString();
-
-                    if(result == 37)
-                    {
-                        formattedResult = "0";
-                        embedColor = new Color(0, 255, 0);
-                    }
-                    if (result == 38)
-                    {
-                        formattedResult = "00";
-                        embedColor = new Color(0, 255, 0);
-                    }
-
-                    var desc = "No one won :(";
-
-                    if(winningBets.Count > 0)
-                    {
-                        desc = "Winners:";
-                        foreach(var bet in winningBets)
-                        {
-                            desc += $"\r\n{bet.DisplayName} won ${bet.Amount * bet.Odds}({bet.Odds - 1}x ${bet.Amount})";
-                        }
-                    }
-
-                    await msg.Channel.SendMessageAsync("", embed: new EmbedBuilder()
-                        .WithTitle($"{textcolor} {formattedResult}")
-                        .WithDescription(desc)
-                        .WithColor(embedColor)
-                        .Build()); 
-                    break;
-            }
-
-
-
-            FinishedGames.Add(game);
-            Games.Remove(game);
-            game.State = GameState.Finished;
-        }
-
-        #region TIMERS
-
-        public void StartGameTimer(Guid Id, SocketMessageComponent Msg)
-        {
-            var game = Games.FirstOrDefault(x=>x.Id == Id);
-            game.State = GameState.Playing;
-
-            var t = new GameTimer
-            {
-                Interval = 5 * 1000,
-                GameId = Id,
-                AutoReset = false,
-                Msg = Msg
-            };
-            
-            t.Elapsed += GameTimerCompleted;
-            t.Start();
-            Timers.Add(t);
-        }
-
-        private void GameTimerCompleted(object sender, ElapsedEventArgs e)
-        {
-            var Id = ((GameTimer)sender).GameId;
-            var Msg = ((GameTimer)sender).Msg;
-            var game = Games.FirstOrDefault(x => x.Id == Id);
-            game.State = GameState.PendingPayout;
-            Payout(game, Msg);
-            Timers.Remove((GameTimer)sender);
-        }
-        #endregion
-
-
         #region ROULETTE
 
+        //Prepare some nasty values for reference.
         private readonly int[] _fullBoard = Enumerable.Range(1, 38).ToArray();
         private readonly int[] _odds = Enumerable.Range(1, 36).Where(x => x % 2 == 1).ToArray();
         private readonly int[] _evens = Enumerable.Range(1, 36).Where(x => x % 2 == 0).ToArray();
@@ -148,33 +67,43 @@ namespace BotterDog.Services
 
         private async Task RouletteModalSubmitted(SocketModal arg)
         {
+            //client.ModalSubmitted captures all modal submits so this allows us to narrow it down to our game
             if (!arg.Data.CustomId.StartsWith("roul")) { return; }
 
+            //We also include the game GUID in the id so lets get that
             var gameId = new Guid(arg.Data.CustomId.Split(":").Last());
 
+            //Find game
             var game = Games.FirstOrDefault(x => x.Id == gameId);
-            if(game == null) { await arg.Channel.SendMessageAsync("Game doesn't exist.");  return; }
+            //If for whatever reason our game has vanished (such as being completed, but the embed didn't update) we error out.
+            if(game == null) { await arg.Channel.SendMessageAsync("Game doesn't exist.");  return; } 
 
+            //If game is in the play state, and all bets have made it, we silently fail.
             if (game.State != GameState.Betting) { return; }
 
-            var g = _client.GetGuild(game.Guild);
-            var t = g.GetTextChannel(game.Channel);
-            var m = await t.GetMessageAsync(game.Message) as IUserMessage;
+            //Find our original message for embed updates.
+            var guild = _client.GetGuild(game.Guild);
+            var channel = guild.GetTextChannel(game.Channel);
+            var m = await channel.GetMessageAsync(game.Message) as IUserMessage;
 
+            //Switch depending on our modals 'action'
             switch (arg.Data.CustomId.Split(":").First())
             {
-                case "roul-single":
+                case "roul-single": //Single choice(s) of numbers
+                    //Find our input
                     var input = arg.Data.Components.ToList().First(x => x.CustomId == "roul-sing-pick").Value;
+                    //Remove any spaces
                     var cleanInput = string.Concat(input.Where(c => !char.IsWhiteSpace(c)));
+                    //Split by comma
                     var choices = cleanInput.Split(',');
 
                     for (int i = 0; i < choices.Length; i++)
                     {
-                        if (choices[i] == "0")
+                        if (choices[i] == "0") //If our bet is on the 'zero' tab, we put it in as `37`
                         {
                             game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 36, new[] { 37 }));
                         }
-                        else if (choices[i] == "00")
+                        else if (choices[i] == "00") //If our bet is on the `double zero` tab, we put in as `38`
                         {
                             game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 36, new[] { 38 }));
                         }
@@ -182,40 +111,46 @@ namespace BotterDog.Services
                         {
                             if (int.TryParse(choices[i], out int val))
                             {
-                                game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 36, new[] { val }));
+                                if (val > 0 && val <= 36) //If input is within the board
+                                {
+                                    game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 36, new[] { val }));
+                                }
                             }
                             else
                             {
                                 //await arg.RespondAsync("Invalid input (ftPti).");
-                                await arg.DeferAsync();
+                                await arg.DeferAsync(); //'Accept' the modal so it closes, but don't respond.
                                 return;
                             }
                         }
                     }
-                   await _updateEmbed(m, game);
+                    //Update our embed with our bet data
+                   await UpdateEmbed(m, game);
 
                     break;
-                case "roul-split":
+                case "roul-split": //For a 'split' between two tiles
                     input = arg.Data.Components.ToList().First(x => x.CustomId == "roul-split-pick").Value;
                     cleanInput = string.Concat(input.Where(c => !char.IsWhiteSpace(c)));
                     choices = cleanInput.Split(',');
 
                     if (choices.Length == 2)
                     {
+                        //Check our values for zeros so we can put in our custom numbers.
                         if ((choices[0] == "0" && choices[1] == "00") || (choices[0] == "00" && choices[1] == "0"))
                         {
                             game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 18, new[] { 37, 38 }));
-                            await _updateEmbed(m, game);
+                            await UpdateEmbed(m, game);
                         }
                         else
                         {
 
                             if (int.TryParse(choices[0], out int firstVal) && int.TryParse(choices[1], out int secondVal))
                             {
+                                //Check our values to make sure they are next to eachother or above/below.
                                 if (firstVal + 1 == secondVal || firstVal - 1 == secondVal || firstVal + 3 == secondVal || firstVal - 3 == secondVal)
                                 {
                                     game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 18, new[] { firstVal, secondVal }));
-                                    await _updateEmbed(m, game);
+                                    await UpdateEmbed(m, game);
                                 }
                             }
                             else
@@ -233,13 +168,14 @@ namespace BotterDog.Services
                         return;
                     }
                     break;
-                case "roul-corner":
+                case "roul-corner": //For 4 number corner picks
                     input = arg.Data.Components.ToList().First(x => x.CustomId == "roul-corner-pick").Value;
                     cleanInput = string.Concat(input.Where(c => !char.IsWhiteSpace(c)));
                     choices = cleanInput.Split(',');
 
                     if (choices.Length == 4)
                     {
+                        //We don't accept zeros, so just error out silently.
                         if(choices.Contains("0") || choices.Contains("00"))
                         {
                             //await arg.RespondAsync("Cannot use 0 or 00 in corners.");
@@ -247,16 +183,18 @@ namespace BotterDog.Services
                             return;
                         }
 
+                        //Nasty parse
                         if (int.TryParse(choices[0], out int firstVal) &&
                             int.TryParse(choices[1], out int secondVal) &&
                             int.TryParse(choices[2], out int thirdVal) &&
                             int.TryParse(choices[3], out int fourthVal))
                         {
+                            //Check if values are all near eachother, this one is pretty format specific unlike the split.
                             if ((firstVal + 1 == secondVal || firstVal - 1 == secondVal) &&
                                 (thirdVal + 1 == fourthVal || thirdVal - 1 == fourthVal))
                             {
                                 game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 9, new[] { firstVal, secondVal, thirdVal, fourthVal }));
-                                await _updateEmbed(m, game);
+                                await UpdateEmbed(m, game);
                             }
                             else
                             {
@@ -279,19 +217,31 @@ namespace BotterDog.Services
                         return;
                     }
                     break;
-                case "roul-dozen":
+                case "roul-dozen": //For 1-12, 13-24, 25-36
                     input = arg.Data.Components.ToList().First(x => x.CustomId == "roul-dozen-pick").Value;
                     cleanInput = string.Concat(input.Where(c => !char.IsWhiteSpace(c))).ToLower();
 
+                    //Since they are large selections of numbers, we take a few options
                     switch (cleanInput)
                     {
                         case "first":
                             game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 3, _first12));
                             break;
+                        case "1-12":
+                            game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 3, _first12));
+                            break;
+
                         case "second":
                             game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 3, _second12));
                             break;
+                        case "13-24":
+                            game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 3, _second12));
+                            break;
+
                         case "third":
+                            game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 3, _third12));
+                            break;
+                        case "25-36":
                             game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 3, _third12));
                             break;
                         default:
@@ -299,11 +249,10 @@ namespace BotterDog.Services
                             await arg.DeferAsync();
                             return;
                     }
-
-                    await _updateEmbed(m, game);
+                    await UpdateEmbed(m, game);
 
                     break;
-                case "roul-halves":
+                case "roul-halves": //For either half of the board
                     input = arg.Data.Components.ToList().First(x => x.CustomId == "roul-halves-pick").Value;
                     cleanInput = string.Concat(input.Where(c => !char.IsWhiteSpace(c))).ToLower();
 
@@ -321,7 +270,7 @@ namespace BotterDog.Services
                             break;
                     }
 
-                    await _updateEmbed(m, game);
+                    await UpdateEmbed(m, game);
                     break;
 
             }
@@ -330,22 +279,30 @@ namespace BotterDog.Services
 
         private async Task RouletteButtonExecuted(SocketMessageComponent arg)
         {
+            //Since client.ButtonExecuted captures all button clicks, let's sort by ours.
             if (!arg.Data.CustomId.StartsWith("roul")) { return; }
 
+            //Find game GUID off id
             var gameId = new Guid(arg.Data.CustomId.Split(":").Last());
 
+            //Find game
             var game = Games.FirstOrDefault(x => x.Id == gameId);
             if (game == null) { await arg.Channel.SendMessageAsync($"{arg.User.Mention} Game doesn't exist anymore."); return; }
 
             switch (arg.Data.CustomId.Split(":").First())
             {
-                case "roul-spin":
+                case "roul-spin": //For final 'spin'
+                    //Only allow started to spin
                     if(arg.User.Id != game.Creator) { await arg.User.SendMessageAsync("You cannot spin the wheel as you are not the starter of the game"); return; }
 
+                    //Throw up timer for the 'spin'
                     StartGameTimer(game.Id, arg);
+                    //Update message
                     await arg.UpdateAsync(x =>
                     {
+                        //Clear all button components
                         x.Components = new ComponentBuilder().Build();
+                        //Change embed
                         x.Embeds = new Embed[] { new EmbedBuilder()
                             .WithTitle("Roulette")
                             .WithColor(255, 20, 20)
@@ -354,27 +311,28 @@ namespace BotterDog.Services
                             .Build() };
                     });
                     break;
-                case "roul-red":
+                case "roul-red": //For reds
                     if (game.State != GameState.Betting) { return; }
                     game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 2, _reds));
                     await _updateEmbed(arg, game);
                     break;
-                case "roul-black":
+                case "roul-black": //For blacks
                     if (game.State != GameState.Betting) { return; }
                     game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 2, _blacks));
                     await _updateEmbed(arg, game);
                     break;
-                case "roul-odds":
+                case "roul-odds": //For odds
                     if (game.State != GameState.Betting) { return; }
                     game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 2, _odds));
                     await _updateEmbed(arg, game);
                     break;
-                case "roul-evens":
+                case "roul-evens": //For evens
                     if (game.State != GameState.Betting) { return; }
                     game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 2, _evens));
                     await _updateEmbed(arg, game);
                     break;
-                case "roul-single":
+                // --- Modals ---
+                case "roul-single": 
                     if (game.State != GameState.Betting) { return; }
                     await arg.RespondWithModalAsync(new ModalBuilder("Single bet", $"roul-single:{game.Id}")
                         .AddTextInput(new TextInputBuilder()
@@ -442,68 +400,83 @@ namespace BotterDog.Services
             }
         }
 
+        //Update our original embed with new bet information
         private async Task _updateEmbed(SocketMessageComponent arg, GamblingState game)
         {
+            //Find embed on message
             var mainEmbed = arg.Message.Embeds.First();
+
             await arg.UpdateAsync(x =>
             {
+                //Find if `Bets` field already exists
                 var betsField = mainEmbed.Fields.FirstOrDefault(x => x.Name == "Bets");
                 if (betsField.Name == null)
                 {
-                    x.Embed = mainEmbed.ToEmbedBuilder().AddField("Bets", _formatBets(game), true).Build();
+                    //If not, create it
+                    x.Embed = mainEmbed.ToEmbedBuilder().AddField("Bets", FormatBets(game), true).Build();
                 }
                 else
                 {
+                    //If yes, build it.
                     var emb = mainEmbed.ToEmbedBuilder();
-                    emb.Fields.FirstOrDefault(x => x.Name == "Bets").Value = _formatBets(game);
+                    emb.Fields.FirstOrDefault(x => x.Name == "Bets").Value = FormatBets(game);
                     x.Embed = emb.Build();
                 }
             });
         }
 
-        private async Task _updateEmbed(IUserMessage arg, GamblingState game)
+        //Update our original embed with new bet information
+        //This is an override for the modals as they do not have access to the SocketMessageComponent
+        private async Task UpdateEmbed(IUserMessage arg, GamblingState game)
         {
+            //Find embed on message
             var mainEmbed = arg.Embeds.First();
 
             await arg.ModifyAsync(x =>
             {
+                //Find if `Bets` field already exists
                 var betsField = mainEmbed.Fields.FirstOrDefault(x => x.Name == "Bets");
                 if (betsField.Name == null)
                 {
-                    x.Embed = mainEmbed.ToEmbedBuilder().AddField("Bets", _formatBets(game), true).Build();
+                    //If not, create it
+                    x.Embed = mainEmbed.ToEmbedBuilder().AddField("Bets", FormatBets(game), true).Build();
                 }
                 else
                 {
+                    //If yes, build it.
                     var emb = mainEmbed.ToEmbedBuilder();
-                    emb.Fields.FirstOrDefault(x => x.Name == "Bets").Value = _formatBets(game);
+                    emb.Fields.FirstOrDefault(x => x.Name == "Bets").Value = FormatBets(game);
                     x.Embed = emb.Build();
                 }
             });
-
         }
 
-        private string _formatBets(GamblingState game)
+        //Format bets nicely into a larger string
+        private string FormatBets(GamblingState game)
         {
             var bets = new List<string>();
-            foreach (var bet in game.Bets)
+            foreach (var bet in game.Bets) //Move to .Single?
             {
-                bets.Add($"{bet.DisplayName} on {_formatHits(bet.Hits)} ({bet.Odds + 1}x, payout: ${game.Bet * bet.Odds + 1})");
+                bets.Add($"{bet.DisplayName} on {FormatHits(bet.Hits)} ({bet.Odds + 1}x, payout: ${game.Bet * bet.Odds + 1})");
             }
+
+            //Find amount of bets, so duplicates are not repeated in field.
             var totalBets = bets.GroupBy(x => x)
                 .Select(g => new { Value = g.Key, Count = g.Count() })
                 .OrderByDescending(x => x.Count);
             string output = "";
             foreach (var totals in totalBets)
             {
-                output += $"{totals.Count} - {totals.Value}\r\n";
+                output += $"{totals.Count}x {totals.Value}\r\n";
             }
             return output;
         }
 
-        private string _formatHits(int[] hits)
+        //Format hits if they match
+        //Wish this could be a Switch statement but C# wont take it for non 'constant'
+        private string FormatHits(int[] hits)
         {
-            string output = "";
-
+            string output;
             if (hits == _odds)
             {
                 output = "Odds";
@@ -548,8 +521,105 @@ namespace BotterDog.Services
             return output;
         }
 
-
         #endregion
+
+        public async void Payout(GamblingState game, SocketMessageComponent msg)
+        {
+            switch (game.GameType)
+            {
+                case GameType.Roulette:
+                    var result = _fullBoard[_random.Next(0, _fullBoard.Length)];
+                    await msg.DeleteOriginalResponseAsync();
+
+                    var winningBets = new List<Bet>();
+
+                    foreach (var bet in game.Bets)
+                    {
+                        if (bet.Hits.Contains(result))
+                        {
+                            winningBets.Add(bet);
+                        }
+                    }
+
+
+                    var textcolor = "Red";
+                    var embedColor = new Color(255, 0, 0);
+                    if (_blacks.Contains(result))
+                    {
+                        textcolor = "Black";
+                        embedColor = new Color(0, 0, 0);
+                    }
+
+                    var formattedResult = result.ToString();
+
+                    if (result == 37)
+                    {
+                        formattedResult = "0";
+                        embedColor = new Color(0, 255, 0);
+                    }
+                    if (result == 38)
+                    {
+                        formattedResult = "00";
+                        embedColor = new Color(0, 255, 0);
+                    }
+
+                    var desc = "No one won :(";
+
+                    if (winningBets.Count > 0)
+                    {
+                        desc = "Winners:";
+                        foreach (var bet in winningBets)
+                        {
+                            desc += $"\r\n{bet.DisplayName} won ${bet.Amount * bet.Odds}({bet.Odds - 1}x ${bet.Amount})";
+                        }
+                    }
+
+                    await msg.Channel.SendMessageAsync("", embed: new EmbedBuilder()
+                        .WithTitle($"{textcolor} {formattedResult}")
+                        .WithDescription(desc)
+                        .WithColor(embedColor)
+                        .Build());
+                    await _botLog.BotLogAsync(BotLogSeverity.Meh, "Roulette game payed out", $"Payout completed for game: {desc}");
+                    break;
+            }
+
+
+            FinishedGames.Add(game);
+            Games.Remove(game);
+            game.State = GameState.Finished;
+        }
+
+        #region TIMERS
+
+        public void StartGameTimer(Guid Id, SocketMessageComponent Msg)
+        {
+            var game = Games.FirstOrDefault(x => x.Id == Id);
+            game.State = GameState.Playing;
+
+            var t = new GameTimer
+            {
+                Interval = 5 * 1000,
+                GameId = Id,
+                AutoReset = false,
+                Msg = Msg
+            };
+
+            t.Elapsed += GameTimerCompleted;
+            t.Start();
+            Timers.Add(t);
+        }
+
+        private void GameTimerCompleted(object sender, ElapsedEventArgs e)
+        {
+            var Id = ((GameTimer)sender).GameId;
+            var Msg = ((GameTimer)sender).Msg;
+            var game = Games.FirstOrDefault(x => x.Id == Id);
+            game.State = GameState.PendingPayout;
+            Payout(game, Msg);
+            Timers.Remove((GameTimer)sender);
+        }
+        #endregion
+
     }
 
     public class GameTimer : Timer

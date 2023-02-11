@@ -24,9 +24,6 @@ namespace FiresStuff
         {
             // Add the public modules that inherit InteractionModuleBase<T> to the InteractionService
             await _commands.AddModulesAsync(Assembly.GetEntryAssembly(), _services);
-            // Another approach to get the assembly of a specific type is:
-            // typeof(CommandHandler).Assembly
-
 
             // Process the InteractionCreated payloads to execute Interactions commands
             _client.InteractionCreated += HandleInteraction;
@@ -133,7 +130,6 @@ namespace FiresStuff
         {
             try
             {
-                // Create an execution context that matches the generic type parameter of your InteractionModuleBase<T> modules
                 var ctx = new SocketInteractionContext(_client, arg);
                 await _commands.ExecuteCommandAsync(ctx, _services);
             }

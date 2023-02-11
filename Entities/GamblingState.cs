@@ -6,17 +6,52 @@ namespace BotterDog.Entities
 {
     public class GamblingState
     {
+        /// <summary>
+        /// Unique GUID assigned to game upon creation
+        /// </summary>
         public Guid Id { get; set; }
-        public ulong Creator { get; set; }
-        public DateTime Started { get; set; }
-        public GameType GameType { get; set; }
 
+        /// <summary>
+        /// Discord ID of the starting user
+        /// </summary>
+        public ulong Creator { get; set; }
+
+        /// <summary>
+        /// Date & time game started
+        /// </summary>
+        public DateTime Started { get; set; }
+
+        /// <summary>
+        /// Original response guild
+        /// </summary>
         public ulong Guild { get; set; }
+        /// <summary>
+        /// Original response channel
+        /// </summary>
         public ulong Channel { get; set; }
+        /// <summary>
+        /// Original response mssage
+        /// </summary>
         public ulong Message { get; set; }
 
+        /// <summary>
+        /// Current state of the game
+        /// </summary>
         public GameState State { get; set; }
+
+        /// <summary>
+        /// Type of game for determing payout
+        /// </summary>
+        public GameType GameType { get; set; }
+
+        /// <summary>
+        /// List of logged bets
+        /// </summary>
         public List<Bet> Bets { get; set; }
+
+        /// <summary>
+        /// Bet amount for game
+        /// </summary>
         public decimal Bet { get; set; }
 
         public GamblingState(ulong Creator, GameType Type, decimal Bet)
@@ -29,36 +64,5 @@ namespace BotterDog.Entities
             State = GameState.Betting;
             Bets = new List<Bet>();
         }
-    }
-
-    public struct Bet
-    {
-        public ulong Better { get; set; }
-        public string DisplayName { get; set; }
-        public decimal Amount { get; set; }
-        public decimal Odds { get; set; }
-        public int[] Hits { get; set; }
-
-        public Bet(ulong Better, string DisplayName, decimal Amount, decimal Odds, int[] Hits)
-        {
-            this.Better = Better;
-            this.DisplayName = DisplayName;
-            this.Odds = Odds;
-            this.Amount = Amount;
-            this.Hits = Hits;
-        }
-    }
-
-    public enum GameType
-    {
-        Roulette
-    }
-
-    public enum GameState
-    {
-        Betting,
-        Playing,
-        PendingPayout,
-        Finished
     }
 }
