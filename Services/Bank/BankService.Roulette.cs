@@ -1,97 +1,17 @@
 ﻿using BotterDog.Entities;
 using CSharpFunctionalExtensions;
 using Discord;
-using Discord.Rest;
 using Discord.WebSocket;
-using FiresStuff.Services;
-using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
-using System.Timers;
 
 namespace BotterDog.Services
 {
-    public class BankService
+    ///ROULETTE RELATED ITEMS
+    public partial class BankService
     {
-        /// <summary>
-        /// Active games
-        /// </summary>
-        public List<GamblingState> Games { get; set; }
-
-        /// <summary>
-        /// Timers, used for delayed payout
-        /// </summary>
-        public List<GameTimer> Timers { get; set; }
-
-        /// <summary>
-        /// Historical log of played games
-        /// </summary>
-        public List<GamblingState> FinishedGames { get; set; }
-
-        public decimal Pot { get; set; }
-
-        private readonly DiscordSocketClient _client;
-        private readonly AccountService _accounts;
-        private readonly BotLogService _botLog;
-        private readonly Random _random;
-
-
-        public BankService(DiscordSocketClient client, AccountService accounts, BotLogService botlog)
-        {
-            _client = client;
-            _accounts = accounts;
-            _botLog = botlog;
-
-            //Link events
-            _client.ModalSubmitted += RouletteModalSubmitted;
-            _client.ButtonExecuted += RouletteButtonExecuted;
-
-            _random = new Random();
-
-            Games = new List<GamblingState>();
-            FinishedGames = new List<GamblingState>();           
-            Timers = new List<GameTimer>();
-        }
-
-        public Result Load()
-        {
-            try
-            {
-                Pot = JsonConvert.DeserializeObject<decimal>(File.ReadAllText("pot.json"));
-                _botLog.BotLogAsync(BotLogSeverity.Good, "Pot loaded", "Bank loaded successfully.");
-                return Result.Success();
-            }
-            catch (Exception e)
-            {
-                _botLog.BotLogAsync(BotLogSeverity.Bad, "Pot Load failure", "Failure while loading pot occured:", true, e.Message);
-                return Result.Failure(e.Message);
-            }
-        }
-
-        public Result Save(bool silent = true)
-        {
-            try
-            {
-                File.WriteAllText("pot.json", JsonConvert.SerializeObject(Pot));
-                if (!silent)
-                {
-                    _botLog.BotLogAsync(BotLogSeverity.Good, "Pot saved", "Pot saved succesfuly.");
-                }
-                return Result.Success();
-            }
-            catch (Exception e)
-            {
-                _botLog.BotLogAsync(BotLogSeverity.Bad, "Pot Save failure", "Failure while saving Pot occured:", true, e.Message);
-                return Result.Failure(e.Message);
-            }
-        }
-
-        #region ROULETTE
-
         //Prepare some nasty values for reference.
         private readonly int[] _fullBoard = Enumerable.Range(1, 38).ToArray();
         private readonly int[] _odds = Enumerable.Range(1, 36).Where(x => x % 2 == 1).ToArray();
@@ -117,7 +37,7 @@ namespace BotterDog.Services
             //Find game
             var game = Games.FirstOrDefault(x => x.Id == gameId);
             //If for whatever reason our game has vanished (such as being completed, but the embed didn't update) we error out.
-            if(game == null) { await arg.Channel.SendMessageAsync("Game doesn't exist.");  return; } 
+            if (game == null) { await arg.Channel.SendMessageAsync("Game doesn't exist."); return; }
 
             //If game is in the play state, and all bets have made it, we silently fail.
             if (game.State != GameState.Betting) { return; }
@@ -138,12 +58,12 @@ namespace BotterDog.Services
                     //Split by comma
                     var choices = cleanInput.Split(',');
 
-                    if(accnt.Balance <= choices.Length * game.Bet)
+                    if (accnt.Balance <= choices.Length * game.Bet)
                     {
                         await arg.User.SendMessageAsync("You don't have enough money to place this bet.");
                         await arg.DeferAsync();
                         return;
-                    }   
+                    }
 
                     for (int i = 0; i < choices.Length; i++)
                     {
@@ -179,7 +99,7 @@ namespace BotterDog.Services
                         }
                     }
                     //Update our embed with our bet data
-                   await UpdateEmbed(m, game);
+                    await UpdateEmbed(m, game);
                     _accounts.Save();
 
                     break;
@@ -251,7 +171,7 @@ namespace BotterDog.Services
                     if (choices.Length == 4)
                     {
                         //We don't accept zeros, so just error out silently.
-                        if(choices.Contains("0") || choices.Contains("00"))
+                        if (choices.Contains("0") || choices.Contains("00"))
                         {
                             //await arg.RespondAsync("Cannot use 0 or 00 in corners.");
                             await arg.DeferAsync();
@@ -393,7 +313,7 @@ namespace BotterDog.Services
             {
                 case "roul-spin": //For final 'spin'
                     //Only allow started to spin
-                    if(arg.User.Id != game.Creator) { await arg.User.SendMessageAsync("You cannot spin the wheel as you are not the starter of the game"); return; }
+                    if (arg.User.Id != game.Creator) { await arg.User.SendMessageAsync("You cannot spin the wheel as you are not the starter of the game"); return; }
 
                     //Throw up timer for the 'spin'
                     StartGameTimer(game.Id, arg);
@@ -476,7 +396,7 @@ namespace BotterDog.Services
                     _accounts.Save();
                     break;
                 // --- Modals ---
-                case "roul-single": 
+                case "roul-single":
                     if (game.State != GameState.Betting) { return; }
                     await arg.RespondWithModalAsync(new ModalBuilder("Single bet", $"roul-single:{game.Id}")
                         .AddTextInput(new TextInputBuilder()
@@ -669,120 +589,5 @@ namespace BotterDog.Services
         }
 
         #endregion
-
-        #endregion
-
-        public async void Payout(GamblingState game, SocketMessageComponent msg)
-        {
-            switch (game.GameType)
-            {
-                case GameType.Roulette:
-                    var result = _fullBoard[_random.Next(0, _fullBoard.Length)];
-                    await msg.DeleteOriginalResponseAsync();
-
-                    var winningBets = new List<Bet>();
-
-                    foreach (var bet in game.Bets)
-                    {
-                        if (bet.Hits.Contains(result))
-                        {
-                            winningBets.Add(bet);
-                        }
-                    }
-
-
-                    var textcolor = "Red";
-                    var embedColor = new Color(255, 0, 0);
-                    if (_blacks.Contains(result))
-                    {
-                        textcolor = "Black";
-                        embedColor = new Color(0, 0, 0);
-                    }
-
-                    var formattedResult = result.ToString();
-
-                    if (result == 37)
-                    {
-                        formattedResult = "0";
-                        embedColor = new Color(0, 255, 0);
-                    }
-                    if (result == 38)
-                    {
-                        formattedResult = "00";
-                        embedColor = new Color(0, 255, 0);
-                    }
-
-                    var desc = "No one won :(";
-
-                    decimal totalWon = 0;
-
-                    if (winningBets.Count > 0)
-                    {
-                        desc = "Winners:";
-                        foreach (var bet in winningBets)
-                        {
-                            desc += $"\r\n{bet.DisplayName} won ${bet.Amount * bet.Odds}({bet.Odds - 1}x ${bet.Amount})";
-                            var account = _accounts.FindOrCreate(bet.Better).Value;
-                            totalWon += (bet.Amount * bet.Odds);
-                            account.ModifyBalance(bet.Amount * bet.Odds);
-                        }
-                    }
-
-                    Pot += game.Pot;
-                    Pot -= totalWon;
-
-                    await msg.Channel.SendMessageAsync("", embed: new EmbedBuilder()
-                        .WithTitle($"{textcolor} {formattedResult}")
-                        .WithDescription(desc)
-                        .WithColor(embedColor)
-                        .Build());
-                    await _botLog.BotLogAsync(BotLogSeverity.Meh, "Roulette game payed out", $"Payout completed for game {game.Id}:\r\n{game.Bets.Count} bets totalling ${game.Pot}\r\n{desc}");
-                    _accounts.Save();
-                    Save();
-                    break;
-            }
-
-            game.State = GameState.Finished;
-            FinishedGames.Add(game);
-            Games.Remove(game);
-        }
-
-        #region TIMERS
-
-        public void StartGameTimer(Guid Id, SocketMessageComponent Msg)
-        {
-            var game = Games.FirstOrDefault(x => x.Id == Id);
-            game.State = GameState.Playing;
-
-            var t = new GameTimer
-            {
-                Interval = 5 * 1000,
-                GameId = Id,
-                AutoReset = false,
-                Msg = Msg
-            };
-
-            t.Elapsed += GameTimerCompleted;
-            t.Start();
-            Timers.Add(t);
-        }
-
-        private void GameTimerCompleted(object sender, ElapsedEventArgs e)
-        {
-            var Id = ((GameTimer)sender).GameId;
-            var Msg = ((GameTimer)sender).Msg;
-            var game = Games.FirstOrDefault(x => x.Id == Id);
-            game.State = GameState.PendingPayout;
-            Payout(game, Msg);
-            Timers.Remove((GameTimer)sender);
-        }
-        #endregion
-
-    }
-
-    public class GameTimer : Timer
-    {
-        public Guid GameId;
-        public SocketMessageComponent Msg;
     }
 }
