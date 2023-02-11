@@ -20,6 +20,7 @@ namespace FiresStuff
         private DiscordSocketClient _client;
         private InteractionService commands;
         private BotLogService _botLog;
+        private BankService _bank;
         private IServiceProvider serviceProvider;
 
         public async Task MainAsync()
@@ -35,6 +36,7 @@ namespace FiresStuff
             serviceProvider = ConfigureServices();
             commands = serviceProvider.GetRequiredService<InteractionService>();
             _botLog = serviceProvider.GetRequiredService<BotLogService>();
+            _bank = serviceProvider.GetRequiredService<BankService>();
             var accnts = serviceProvider.GetRequiredService<AccountService>();
 
             //Link logging methods
@@ -49,6 +51,7 @@ namespace FiresStuff
             {
                 //Load accounts from file
                 accnts.Load();
+                _bank.Load();
                 //Re-register commands if any updates occur
                 await commands.RegisterCommandsToGuildAsync(752755222505586739, true); //Sam's Stuff
                 //await commands.RegisterCommandsToGuildAsync(537791310212628501, true); //Doggiedogs
