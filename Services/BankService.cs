@@ -62,7 +62,7 @@ namespace BotterDog.Services
             try
             {
                 Pot = JsonConvert.DeserializeObject<decimal>(File.ReadAllText("pot.json"));
-                _botLog.BotLogAsync(BotLogSeverity.Good, "Pot loaded", "Accounts loaded successfully.");
+                _botLog.BotLogAsync(BotLogSeverity.Good, "Pot loaded", "Bank loaded successfully.");
                 return Result.Success();
             }
             catch (Exception e)
@@ -544,6 +544,8 @@ namespace BotterDog.Services
             }
         }
 
+        #region Roulette Embed Updating
+
         //Update our original embed with new bet information
         private async Task _updateEmbed(SocketMessageComponent arg, GamblingState game)
         {
@@ -668,6 +670,8 @@ namespace BotterDog.Services
 
         #endregion
 
+        #endregion
+
         public async void Payout(GamblingState game, SocketMessageComponent msg)
         {
             switch (game.GameType)
@@ -732,16 +736,15 @@ namespace BotterDog.Services
                         .WithDescription(desc)
                         .WithColor(embedColor)
                         .Build());
-                    await _botLog.BotLogAsync(BotLogSeverity.Meh, "Roulette game payed out", $"Payout completed for game {game.Id}:\r\n{game.Bets.Count} bets totalling {game.Pot}\r\n{desc}");
+                    await _botLog.BotLogAsync(BotLogSeverity.Meh, "Roulette game payed out", $"Payout completed for game {game.Id}:\r\n{game.Bets.Count} bets totalling ${game.Pot}\r\n{desc}");
                     _accounts.Save();
                     Save();
                     break;
             }
 
-
+            game.State = GameState.Finished;
             FinishedGames.Add(game);
             Games.Remove(game);
-            game.State = GameState.Finished;
         }
 
         #region TIMERS
