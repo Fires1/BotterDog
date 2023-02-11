@@ -1,10 +1,13 @@
 ﻿using BotterDog.Entities;
+using CSharpFunctionalExtensions;
 using Discord;
 using Discord.Rest;
 using Discord.WebSocket;
 using FiresStuff.Services;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -29,15 +32,18 @@ namespace BotterDog.Services
         /// </summary>
         public List<GamblingState> FinishedGames { get; set; }
 
+        public decimal Pot { get; set; }
 
         private readonly DiscordSocketClient _client;
+        private readonly AccountService _accounts;
         private readonly BotLogService _botLog;
         private readonly Random _random;
 
 
-        public BankService(DiscordSocketClient client, BotLogService botlog)
+        public BankService(DiscordSocketClient client, AccountService accounts, BotLogService botlog)
         {
             _client = client;
+            _accounts = accounts;
             _botLog = botlog;
 
             //Link events
@@ -49,6 +55,39 @@ namespace BotterDog.Services
             Games = new List<GamblingState>();
             FinishedGames = new List<GamblingState>();           
             Timers = new List<GameTimer>();
+        }
+
+        public Result Load()
+        {
+            try
+            {
+                Pot = JsonConvert.DeserializeObject<decimal>(File.ReadAllText("pot.json"));
+                _botLog.BotLogAsync(BotLogSeverity.Good, "Pot loaded", "Accounts loaded successfully.");
+                return Result.Success();
+            }
+            catch (Exception e)
+            {
+                _botLog.BotLogAsync(BotLogSeverity.Bad, "Pot Load failure", "Failure while loading pot occured:", true, e.Message);
+                return Result.Failure(e.Message);
+            }
+        }
+
+        public Result Save(bool silent = true)
+        {
+            try
+            {
+                File.WriteAllText("pot.json", JsonConvert.SerializeObject(Pot));
+                if (!silent)
+                {
+                    _botLog.BotLogAsync(BotLogSeverity.Good, "Pot saved", "Pot saved succesfuly.");
+                }
+                return Result.Success();
+            }
+            catch (Exception e)
+            {
+                _botLog.BotLogAsync(BotLogSeverity.Bad, "Pot Save failure", "Failure while saving Pot occured:", true, e.Message);
+                return Result.Failure(e.Message);
+            }
         }
 
         #region ROULETTE
@@ -69,6 +108,8 @@ namespace BotterDog.Services
         {
             //client.ModalSubmitted captures all modal submits so this allows us to narrow it down to our game
             if (!arg.Data.CustomId.StartsWith("roul")) { return; }
+
+            var accnt = _accounts.FindOrCreate(arg.User.Id).Value;
 
             //We also include the game GUID in the id so lets get that
             var gameId = new Guid(arg.Data.CustomId.Split(":").Last());
@@ -97,15 +138,26 @@ namespace BotterDog.Services
                     //Split by comma
                     var choices = cleanInput.Split(',');
 
+                    if(accnt.Balance <= choices.Length * game.Bet)
+                    {
+                        await arg.User.SendMessageAsync("You don't have enough money to place this bet.");
+                        await arg.DeferAsync();
+                        return;
+                    }   
+
                     for (int i = 0; i < choices.Length; i++)
                     {
                         if (choices[i] == "0") //If our bet is on the 'zero' tab, we put it in as `37`
                         {
                             game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 36, new[] { 37 }));
+                            accnt.Balance -= game.Bet;
+                            game.Pot += game.Bet;
                         }
                         else if (choices[i] == "00") //If our bet is on the `double zero` tab, we put in as `38`
                         {
                             game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 36, new[] { 38 }));
+                            accnt.Balance -= game.Bet;
+                            game.Pot += game.Bet;
                         }
                         else
                         {
@@ -114,6 +166,8 @@ namespace BotterDog.Services
                                 if (val > 0 && val <= 36) //If input is within the board
                                 {
                                     game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 36, new[] { val }));
+                                    accnt.Balance -= game.Bet;
+                                    game.Pot += game.Bet;
                                 }
                             }
                             else
@@ -126,6 +180,7 @@ namespace BotterDog.Services
                     }
                     //Update our embed with our bet data
                    await UpdateEmbed(m, game);
+                    _accounts.Save();
 
                     break;
                 case "roul-split": //For a 'split' between two tiles
@@ -133,13 +188,23 @@ namespace BotterDog.Services
                     cleanInput = string.Concat(input.Where(c => !char.IsWhiteSpace(c)));
                     choices = cleanInput.Split(',');
 
+                    if (accnt.Balance <= game.Bet)
+                    {
+                        await arg.User.SendMessageAsync("You don't have enough money to place this bet.");
+                        await arg.DeferAsync();
+                        return;
+                    }
+
                     if (choices.Length == 2)
                     {
                         //Check our values for zeros so we can put in our custom numbers.
                         if ((choices[0] == "0" && choices[1] == "00") || (choices[0] == "00" && choices[1] == "0"))
                         {
                             game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 18, new[] { 37, 38 }));
+                            accnt.Balance -= game.Bet;
+                            game.Pot += game.Bet;
                             await UpdateEmbed(m, game);
+                            _accounts.Save();
                         }
                         else
                         {
@@ -150,7 +215,10 @@ namespace BotterDog.Services
                                 if (firstVal + 1 == secondVal || firstVal - 1 == secondVal || firstVal + 3 == secondVal || firstVal - 3 == secondVal)
                                 {
                                     game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 18, new[] { firstVal, secondVal }));
+                                    accnt.Balance -= game.Bet;
+                                    game.Pot += game.Bet;
                                     await UpdateEmbed(m, game);
+                                    _accounts.Save();
                                 }
                             }
                             else
@@ -173,6 +241,13 @@ namespace BotterDog.Services
                     cleanInput = string.Concat(input.Where(c => !char.IsWhiteSpace(c)));
                     choices = cleanInput.Split(',');
 
+                    if (accnt.Balance <= game.Bet)
+                    {
+                        await arg.User.SendMessageAsync("You don't have enough money to place this bet.");
+                        await arg.DeferAsync();
+                        return;
+                    }
+
                     if (choices.Length == 4)
                     {
                         //We don't accept zeros, so just error out silently.
@@ -194,7 +269,10 @@ namespace BotterDog.Services
                                 (thirdVal + 1 == fourthVal || thirdVal - 1 == fourthVal))
                             {
                                 game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 9, new[] { firstVal, secondVal, thirdVal, fourthVal }));
+                                accnt.Balance -= game.Bet;
+                                game.Pot += game.Bet;
                                 await UpdateEmbed(m, game);
+                                _accounts.Save();
                             }
                             else
                             {
@@ -220,6 +298,13 @@ namespace BotterDog.Services
                 case "roul-dozen": //For 1-12, 13-24, 25-36
                     input = arg.Data.Components.ToList().First(x => x.CustomId == "roul-dozen-pick").Value;
                     cleanInput = string.Concat(input.Where(c => !char.IsWhiteSpace(c))).ToLower();
+
+                    if (accnt.Balance <= game.Bet)
+                    {
+                        await arg.User.SendMessageAsync("You don't have enough money to place this bet.");
+                        await arg.DeferAsync();
+                        return;
+                    }
 
                     //Since they are large selections of numbers, we take a few options
                     switch (cleanInput)
@@ -249,12 +334,22 @@ namespace BotterDog.Services
                             await arg.DeferAsync();
                             return;
                     }
+                    accnt.Balance -= game.Bet;
+                    game.Pot += game.Bet;
                     await UpdateEmbed(m, game);
+                    _accounts.Save();
 
                     break;
                 case "roul-halves": //For either half of the board
                     input = arg.Data.Components.ToList().First(x => x.CustomId == "roul-halves-pick").Value;
                     cleanInput = string.Concat(input.Where(c => !char.IsWhiteSpace(c))).ToLower();
+
+                    if (accnt.Balance <= game.Bet)
+                    {
+                        await arg.User.SendMessageAsync("You don't have enough money to place this bet.");
+                        await arg.DeferAsync();
+                        return;
+                    }
 
                     switch (cleanInput)
                     {
@@ -269,8 +364,10 @@ namespace BotterDog.Services
                             await arg.DeferAsync();
                             break;
                     }
-
+                    accnt.Balance -= game.Bet;
+                    game.Pot += game.Bet;
                     await UpdateEmbed(m, game);
+                    _accounts.Save();
                     break;
 
             }
@@ -282,12 +379,15 @@ namespace BotterDog.Services
             //Since client.ButtonExecuted captures all button clicks, let's sort by ours.
             if (!arg.Data.CustomId.StartsWith("roul")) { return; }
 
+            var accnt = _accounts.FindOrCreate(arg.User.Id).Value;
+
             //Find game GUID off id
             var gameId = new Guid(arg.Data.CustomId.Split(":").Last());
 
             //Find game
             var game = Games.FirstOrDefault(x => x.Id == gameId);
             if (game == null) { await arg.Channel.SendMessageAsync($"{arg.User.Mention} Game doesn't exist anymore."); return; }
+
 
             switch (arg.Data.CustomId.Split(":").First())
             {
@@ -313,23 +413,67 @@ namespace BotterDog.Services
                     break;
                 case "roul-red": //For reds
                     if (game.State != GameState.Betting) { return; }
+
+                    if (accnt.Balance <= game.Bet)
+                    {
+                        await arg.User.SendMessageAsync("You don't have enough money to place this bet.");
+                        await arg.DeferAsync();
+                        return;
+                    }
+
                     game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 2, _reds));
+                    accnt.Balance -= game.Bet;
+                    game.Pot += game.Bet;
                     await _updateEmbed(arg, game);
+                    _accounts.Save();
                     break;
                 case "roul-black": //For blacks
                     if (game.State != GameState.Betting) { return; }
+
+                    if (accnt.Balance <= game.Bet)
+                    {
+                        await arg.User.SendMessageAsync("You don't have enough money to place this bet.");
+                        await arg.DeferAsync();
+                        return;
+                    }
+
                     game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 2, _blacks));
+                    accnt.Balance -= game.Bet;
+                    game.Pot += game.Bet;
                     await _updateEmbed(arg, game);
+                    _accounts.Save();
                     break;
                 case "roul-odds": //For odds
                     if (game.State != GameState.Betting) { return; }
+
+                    if (accnt.Balance <= game.Bet)
+                    {
+                        await arg.User.SendMessageAsync("You don't have enough money to place this bet.");
+                        await arg.DeferAsync();
+                        return;
+                    }
+
                     game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 2, _odds));
+                    accnt.Balance -= game.Bet;
+                    game.Pot += game.Bet;
                     await _updateEmbed(arg, game);
+                    _accounts.Save();
                     break;
                 case "roul-evens": //For evens
                     if (game.State != GameState.Betting) { return; }
+
+                    if (accnt.Balance <= game.Bet)
+                    {
+                        await arg.User.SendMessageAsync("You don't have enough money to place this bet.");
+                        await arg.DeferAsync();
+                        return;
+                    }
+
                     game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 2, _evens));
+                    accnt.Balance -= game.Bet;
+                    game.Pot += game.Bet;
                     await _updateEmbed(arg, game);
+                    _accounts.Save();
                     break;
                 // --- Modals ---
                 case "roul-single": 
@@ -422,6 +566,20 @@ namespace BotterDog.Services
                     emb.Fields.FirstOrDefault(x => x.Name == "Bets").Value = FormatBets(game);
                     x.Embed = emb.Build();
                 }
+
+                var totalBets = mainEmbed.Fields.FirstOrDefault(x => x.Name == "Total $");
+                if (totalBets.Name == null)
+                {
+                    //If not, create it
+                    x.Embed = mainEmbed.ToEmbedBuilder().AddField("Total $", $"{game.Bets.Count} bet(s) totalling: ${game.Pot}", true).Build();
+                }
+                else
+                {
+                    //If yes, build it.
+                    var emb = mainEmbed.ToEmbedBuilder();
+                    emb.Fields.FirstOrDefault(x => x.Name == "Total $").Value = $"{game.Bets.Count} bet(s) totalling: ${game.Pot}";
+                    x.Embed = emb.Build();
+                }
             });
         }
 
@@ -457,7 +615,7 @@ namespace BotterDog.Services
             var bets = new List<string>();
             foreach (var bet in game.Bets) //Move to .Single?
             {
-                bets.Add($"{bet.DisplayName} on {FormatHits(bet.Hits)} ({bet.Odds + 1}x, payout: ${game.Bet * bet.Odds + 1})");
+                bets.Add($"{bet.DisplayName} on {FormatHits(bet.Hits)} ({bet.Odds - 1}x, payout: ${game.Bet * bet.Odds})");
             }
 
             //Find amount of bets, so duplicates are not repeated in field.
@@ -516,6 +674,7 @@ namespace BotterDog.Services
             else
             {
                 output = string.Join(", ", hits);
+                output = output.Replace("37", "0").Replace("38", "00");
             }
 
             return output;
@@ -565,21 +724,31 @@ namespace BotterDog.Services
 
                     var desc = "No one won :(";
 
+                    decimal totalWon = 0;
+
                     if (winningBets.Count > 0)
                     {
                         desc = "Winners:";
                         foreach (var bet in winningBets)
                         {
                             desc += $"\r\n{bet.DisplayName} won ${bet.Amount * bet.Odds}({bet.Odds - 1}x ${bet.Amount})";
+                            var account = _accounts.FindOrCreate(bet.Better).Value;
+                            totalWon += (bet.Amount * bet.Odds);
+                            account.ModifyBalance(bet.Amount * bet.Odds);
                         }
                     }
+
+                    Pot += game.Pot;
+                    Pot -= totalWon;
 
                     await msg.Channel.SendMessageAsync("", embed: new EmbedBuilder()
                         .WithTitle($"{textcolor} {formattedResult}")
                         .WithDescription(desc)
                         .WithColor(embedColor)
                         .Build());
-                    await _botLog.BotLogAsync(BotLogSeverity.Meh, "Roulette game payed out", $"Payout completed for game: {desc}");
+                    await _botLog.BotLogAsync(BotLogSeverity.Meh, "Roulette game payed out", $"Payout completed for game {game.Id}:\r\n{game.Bets.Count} bets totalling {game.Pot}\r\n{desc}");
+                    _accounts.Save();
+                    Save();
                     break;
             }
 
