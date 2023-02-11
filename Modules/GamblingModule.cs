@@ -34,7 +34,7 @@ namespace FiresStuff.Modules
         public async Task BalanceAsync()
         {
             var accnt = _accounts.FindOrCreate(Context.User.Id);
-            await RespondAsync(text: $"You have an account balance of **${decimal.Round(accnt.Value.Balance, 2)}** doggy dawg bucks.");
+            await RespondAsync(text: $"{Context.User.Mention}, you have an account balance of **${decimal.Round(accnt.Value.Balance, 2)}** doggy dawg bucks.");
         }
 
         [SlashCommand("checkbal", "Check someone else's account balance")]
