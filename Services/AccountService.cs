@@ -84,12 +84,15 @@ namespace BotterDog.Services
             }
         }
 
-        public Result Save()
+        public Result Save(bool silent = true)
         {
             try
             {
                 File.WriteAllText("accounts.json", JsonConvert.SerializeObject(Accounts));
-                _botLog.BotLogAsync(BotLogSeverity.Good, "Accounts saved", "Accounts saved succesfuly.");
+                if (!silent)
+                {
+                    _botLog.BotLogAsync(BotLogSeverity.Good, "Accounts saved", "Accounts saved succesfuly.");
+                }
                 return Result.Success();
             }
             catch (Exception e)
