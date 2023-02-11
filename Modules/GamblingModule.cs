@@ -17,8 +17,6 @@ namespace FiresStuff.Modules
         private readonly DiscordSocketClient _client;
         private readonly BankService _bank;
 
-
-
         public GamblingModule(BotLogService botlog, AccountService accnts, DiscordSocketClient client, BankService bank, IServiceProvider services)
         {
             _botLog = botlog;

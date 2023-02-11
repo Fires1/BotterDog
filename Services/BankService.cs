@@ -566,20 +566,6 @@ namespace BotterDog.Services
                     emb.Fields.FirstOrDefault(x => x.Name == "Bets").Value = FormatBets(game);
                     x.Embed = emb.Build();
                 }
-
-                var totalBets = mainEmbed.Fields.FirstOrDefault(x => x.Name == "Total $");
-                if (totalBets.Name == null)
-                {
-                    //If not, create it
-                    x.Embed = mainEmbed.ToEmbedBuilder().AddField("Total $", $"{game.Bets.Count} bet(s) totalling: ${game.Pot}", true).Build();
-                }
-                else
-                {
-                    //If yes, build it.
-                    var emb = mainEmbed.ToEmbedBuilder();
-                    emb.Fields.FirstOrDefault(x => x.Name == "Total $").Value = $"{game.Bets.Count} bet(s) totalling: ${game.Pot}";
-                    x.Embed = emb.Build();
-                }
             });
         }
 
