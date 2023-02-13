@@ -17,10 +17,10 @@ namespace BotterDog.Services
         private readonly int[] _odds = Enumerable.Range(1, 36).Where(x => x % 2 == 1).ToArray();
         private readonly int[] _evens = Enumerable.Range(1, 36).Where(x => x % 2 == 0).ToArray();
         private readonly int[] _first12 = Enumerable.Range(1, 12).ToArray();
-        private readonly int[] _second12 = Enumerable.Range(13, 24).ToArray();
-        private readonly int[] _third12 = Enumerable.Range(25, 36).ToArray();
+        private readonly int[] _second12 = Enumerable.Range(13, 12).ToArray();
+        private readonly int[] _third12 = Enumerable.Range(25, 12).ToArray();
         private readonly int[] _firstHalf = Enumerable.Range(1, 18).ToArray();
-        private readonly int[] _secondHalf = Enumerable.Range(19, 36).ToArray();
+        private readonly int[] _secondHalf = Enumerable.Range(19, 18).ToArray();
         private readonly int[] _reds = { 1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36 };
         private readonly int[] _blacks = { 2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35 };
 
@@ -35,7 +35,7 @@ namespace BotterDog.Services
             var gameId = new Guid(arg.Data.CustomId.Split(":").Last());
 
             //Find game
-            var game = Games.FirstOrDefault(x => x.Id == gameId);
+            var game = Games.FirstOrDefault(x => x.Id == gameId) as RouletteState;
             //If for whatever reason our game has vanished (such as being completed, but the embed didn't update) we error out.
             if (game == null) { await arg.Channel.SendMessageAsync("Game doesn't exist."); return; }
 
@@ -305,7 +305,7 @@ namespace BotterDog.Services
             var gameId = new Guid(arg.Data.CustomId.Split(":").Last());
 
             //Find game
-            var game = Games.FirstOrDefault(x => x.Id == gameId);
+            var game = Games.FirstOrDefault(x => x.Id == gameId) as RouletteState;
             if (game == null) { await arg.Channel.SendMessageAsync($"{arg.User.Mention} Game doesn't exist anymore."); return; }
 
 
@@ -467,7 +467,7 @@ namespace BotterDog.Services
         #region Roulette Embed Updating
 
         //Update our original embed with new bet information
-        private async Task _updateEmbed(SocketMessageComponent arg, GamblingState game)
+        private async Task _updateEmbed(SocketMessageComponent arg, RouletteState game)
         {
             //Find embed on message
             var mainEmbed = arg.Message.Embeds.First();
@@ -493,7 +493,7 @@ namespace BotterDog.Services
 
         //Update our original embed with new bet information
         //This is an override for the modals as they do not have access to the SocketMessageComponent
-        private async Task UpdateEmbed(IUserMessage arg, GamblingState game)
+        private async Task UpdateEmbed(IUserMessage arg, RouletteState game)
         {
             //Find embed on message
             var mainEmbed = arg.Embeds.First();
@@ -518,7 +518,7 @@ namespace BotterDog.Services
         }
 
         //Format bets nicely into a larger string
-        private string FormatBets(GamblingState game)
+        private string FormatBets(RouletteState game)
         {
             var bets = new List<string>();
             foreach (var bet in game.Bets) //Move to .Single?

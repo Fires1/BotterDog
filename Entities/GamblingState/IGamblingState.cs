@@ -1,10 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Text;
 
 namespace BotterDog.Entities
 {
-    public class GamblingState
+    public interface IGamblingState
     {
         /// <summary>
         /// Unique GUID assigned to game upon creation
@@ -58,17 +57,5 @@ namespace BotterDog.Entities
         /// Current money pot
         /// </summary>
         public decimal Pot { get; set; }
-
-        public GamblingState(ulong Creator, GameType Type, decimal Bet)
-        {
-            this.Creator = Creator;
-            GameType = Type;
-            this.Bet = Bet;
-            Pot = 0;
-            Id = Guid.NewGuid();
-            Started = DateTime.Now; 
-            State = GameState.Betting;
-            Bets = new List<Bet>();
-        }
     }
 }

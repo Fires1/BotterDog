@@ -17,7 +17,7 @@ namespace BotterDog.Services
         /// <summary>
         /// Active games
         /// </summary>
-        public List<GamblingState> Games { get; set; }
+        public List<IGamblingState> Games { get; set; }
 
         /// <summary>
         /// Timers, used for delayed payout
@@ -27,7 +27,7 @@ namespace BotterDog.Services
         /// <summary>
         /// Historical log of played games
         /// </summary>
-        public List<GamblingState> FinishedGames { get; set; }
+        public List<IGamblingState> FinishedGames { get; set; }
 
         public decimal Pot { get; set; }
 
@@ -43,14 +43,17 @@ namespace BotterDog.Services
             _accounts = accounts;
             _botLog = botlog;
 
-            //Link events
+            //Link Roulette events
             _client.ModalSubmitted += RouletteModalSubmitted;
             _client.ButtonExecuted += RouletteButtonExecuted;
+            //Link Custom Bet events
+            _client.ModalSubmitted += CustomModalSubmitted;
+            _client.ButtonExecuted += CustomButtonExecuted;
 
             _random = new Random();
 
-            Games = new List<GamblingState>();
-            FinishedGames = new List<GamblingState>();           
+            Games = new List<IGamblingState>();
+            FinishedGames = new List<IGamblingState>();           
             Timers = new List<GameTimer>();
         }
 
@@ -89,17 +92,18 @@ namespace BotterDog.Services
 
       
 
-        public async void Payout(GamblingState game, SocketMessageComponent msg)
+        public async void Payout(IGamblingState game, SocketMessageComponent msg)
         {
             switch (game.GameType)
             {
                 case GameType.Roulette:
+                    var g = game as RouletteState;
                     var result = _fullBoard[_random.Next(0, _fullBoard.Length)];
                     await msg.DeleteOriginalResponseAsync();
 
                     var winningBets = new List<Bet>();
 
-                    foreach (var bet in game.Bets)
+                    foreach (var bet in g.Bets)
                     {
                         if (bet.Hits.Contains(result))
                         {
@@ -138,14 +142,14 @@ namespace BotterDog.Services
                         desc = "Winners:";
                         foreach (var bet in winningBets)
                         {
-                            desc += $"\r\n{bet.DisplayName} won ${bet.Amount * bet.Odds}({bet.Odds - 1}x ${bet.Amount})";
+                            desc += $"\r\n{bet.DisplayName} won ${bet.Amount * bet.Odds}({bet.Odds}x ${bet.Amount})";
                             var account = _accounts.FindOrCreate(bet.Better).Value;
                             totalWon += (bet.Amount * bet.Odds);
                             account.ModifyBalance(bet.Amount * bet.Odds);
                         }
                     }
 
-                    Pot += game.Pot;
+                    Pot += g.Pot;
                     Pot -= totalWon;
 
                     await msg.Channel.SendMessageAsync("", embed: new EmbedBuilder()
@@ -153,7 +157,7 @@ namespace BotterDog.Services
                         .WithDescription(desc)
                         .WithColor(embedColor)
                         .Build());
-                    await _botLog.BotLogAsync(BotLogSeverity.Meh, "Roulette game payed out", $"Payout completed for game {game.Id}:\r\n{game.Bets.Count} bets totalling ${game.Pot}\r\n{desc}");
+                    await _botLog.BotLogAsync(BotLogSeverity.Meh, "Roulette game payed out", $"Payout completed for game {game.Id}:\r\n{g.Bets.Count} bets totalling ${g.Pot}\r\n{desc}");
                     _accounts.Save();
                     Save();
                     break;

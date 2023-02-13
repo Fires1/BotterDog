@@ -17,7 +17,7 @@ namespace BotterDog.Modules
                 await RespondAsync("You do not have enough money to make the starter bet, therefore you are too broke to start this game.", ephemeral: true);
             }
 
-            var game = new GamblingState(Context.User.Id, GameType.Roulette, Bet);
+            var game = new RouletteState(Context.User.Id, GameType.Roulette, Bet);
 
             var ar = new ActionRowBuilder()
                 .WithButton("Single number 36x", $"roul-single:{game.Id}", ButtonStyle.Success, emote: Emoji.Parse(":one:"))
