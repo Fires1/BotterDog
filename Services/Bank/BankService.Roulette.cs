@@ -99,7 +99,7 @@ namespace BotterDog.Services
                         }
                     }
                     //Update our embed with our bet data
-                    await UpdateEmbed(m, game);
+                    await UpdateRouletteEmbed(m, game);
                     _accounts.Save();
 
                     break;
@@ -123,7 +123,7 @@ namespace BotterDog.Services
                             game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 18, new[] { 37, 38 }));
                             accnt.Balance -= game.Bet;
                             game.Pot += game.Bet;
-                            await UpdateEmbed(m, game);
+                            await UpdateRouletteEmbed(m, game);
                             _accounts.Save();
                         }
                         else
@@ -137,7 +137,7 @@ namespace BotterDog.Services
                                     game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 18, new[] { firstVal, secondVal }));
                                     accnt.Balance -= game.Bet;
                                     game.Pot += game.Bet;
-                                    await UpdateEmbed(m, game);
+                                    await UpdateRouletteEmbed(m, game);
                                     _accounts.Save();
                                 }
                             }
@@ -191,7 +191,7 @@ namespace BotterDog.Services
                                 game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 9, new[] { firstVal, secondVal, thirdVal, fourthVal }));
                                 accnt.Balance -= game.Bet;
                                 game.Pot += game.Bet;
-                                await UpdateEmbed(m, game);
+                                await UpdateRouletteEmbed(m, game);
                                 _accounts.Save();
                             }
                             else
@@ -256,7 +256,7 @@ namespace BotterDog.Services
                     }
                     accnt.Balance -= game.Bet;
                     game.Pot += game.Bet;
-                    await UpdateEmbed(m, game);
+                    await UpdateRouletteEmbed(m, game);
                     _accounts.Save();
 
                     break;
@@ -286,7 +286,7 @@ namespace BotterDog.Services
                     }
                     accnt.Balance -= game.Bet;
                     game.Pot += game.Bet;
-                    await UpdateEmbed(m, game);
+                    await UpdateRouletteEmbed(m, game);
                     _accounts.Save();
                     break;
 
@@ -344,7 +344,7 @@ namespace BotterDog.Services
                     game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 2, _reds));
                     accnt.Balance -= game.Bet;
                     game.Pot += game.Bet;
-                    await _updateEmbed(arg, game);
+                    await _updateRouletteEmbed(arg, game);
                     _accounts.Save();
                     break;
                 case "roul-black": //For blacks
@@ -360,7 +360,7 @@ namespace BotterDog.Services
                     game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 2, _blacks));
                     accnt.Balance -= game.Bet;
                     game.Pot += game.Bet;
-                    await _updateEmbed(arg, game);
+                    await _updateRouletteEmbed(arg, game);
                     _accounts.Save();
                     break;
                 case "roul-odds": //For odds
@@ -376,7 +376,7 @@ namespace BotterDog.Services
                     game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 2, _odds));
                     accnt.Balance -= game.Bet;
                     game.Pot += game.Bet;
-                    await _updateEmbed(arg, game);
+                    await _updateRouletteEmbed(arg, game);
                     _accounts.Save();
                     break;
                 case "roul-evens": //For evens
@@ -392,7 +392,7 @@ namespace BotterDog.Services
                     game.Bets.Add(new Bet(arg.User.Id, (arg.User as SocketGuildUser).DisplayName, game.Bet, 2, _evens));
                     accnt.Balance -= game.Bet;
                     game.Pot += game.Bet;
-                    await _updateEmbed(arg, game);
+                    await _updateRouletteEmbed(arg, game);
                     _accounts.Save();
                     break;
                 // --- Modals ---
@@ -467,7 +467,7 @@ namespace BotterDog.Services
         #region Roulette Embed Updating
 
         //Update our original embed with new bet information
-        private async Task _updateEmbed(SocketMessageComponent arg, RouletteState game)
+        private async Task _updateRouletteEmbed(SocketMessageComponent arg, RouletteState game)
         {
             //Find embed on message
             var mainEmbed = arg.Message.Embeds.First();
@@ -479,13 +479,13 @@ namespace BotterDog.Services
                 if (betsField.Name == null)
                 {
                     //If not, create it
-                    x.Embed = mainEmbed.ToEmbedBuilder().AddField("Bets", FormatBets(game), true).Build();
+                    x.Embed = mainEmbed.ToEmbedBuilder().AddField("Bets", FormatRouletteBets(game), true).Build();
                 }
                 else
                 {
                     //If yes, build it.
                     var emb = mainEmbed.ToEmbedBuilder();
-                    emb.Fields.FirstOrDefault(x => x.Name == "Bets").Value = FormatBets(game);
+                    emb.Fields.FirstOrDefault(x => x.Name == "Bets").Value = FormatRouletteBets(game);
                     x.Embed = emb.Build();
                 }
             });
@@ -493,7 +493,7 @@ namespace BotterDog.Services
 
         //Update our original embed with new bet information
         //This is an override for the modals as they do not have access to the SocketMessageComponent
-        private async Task UpdateEmbed(IUserMessage arg, RouletteState game)
+        private async Task UpdateRouletteEmbed(IUserMessage arg, RouletteState game)
         {
             //Find embed on message
             var mainEmbed = arg.Embeds.First();
@@ -505,20 +505,20 @@ namespace BotterDog.Services
                 if (betsField.Name == null)
                 {
                     //If not, create it
-                    x.Embed = mainEmbed.ToEmbedBuilder().AddField("Bets", FormatBets(game), true).Build();
+                    x.Embed = mainEmbed.ToEmbedBuilder().AddField("Bets", FormatRouletteBets(game), true).Build();
                 }
                 else
                 {
                     //If yes, build it.
                     var emb = mainEmbed.ToEmbedBuilder();
-                    emb.Fields.FirstOrDefault(x => x.Name == "Bets").Value = FormatBets(game);
+                    emb.Fields.FirstOrDefault(x => x.Name == "Bets").Value = FormatRouletteBets(game);
                     x.Embed = emb.Build();
                 }
             });
         }
 
         //Format bets nicely into a larger string
-        private string FormatBets(RouletteState game)
+        private string FormatRouletteBets(RouletteState game)
         {
             var bets = new List<string>();
             foreach (var bet in game.Bets) //Move to .Single?
