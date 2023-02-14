@@ -203,7 +203,7 @@ namespace BotterDog.Services
                         .WithColor(0, 255, 0)
                         .WithFooter("To facilitate wagers, the house takes a 5% fee off the ending pot.")
                         .Build());
-
+                    await _botLog.BotLogAsync(BotLogSeverity.Meh, "Custom wager payed out", $"Payout completed for game {game.Id}:\r\n{finished.Bets.Count} bets totalling ${finished.Pot}\r\n{string.Join("\r\n", finished.Options)}");
                     _accounts.Save();
                     Save();
 

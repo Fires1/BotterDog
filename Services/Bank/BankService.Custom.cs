@@ -116,7 +116,7 @@ namespace BotterDog.Services
                 }
                 ar.WithSelectMenu(menu);
             }
-
+            await _botLog.BotLogAsync(BotLogSeverity.Meh, "Custom wager started", $"{game.Id}\r\n{game.Decider}\r\nBet: {game.Bet}");
             var msg = await arg.Channel.SendMessageAsync(embed: embed.Build(), components: new ComponentBuilder().AddRow(ar).Build());
             if(game.Decider == CustomDecider.TopperDog)
             {
