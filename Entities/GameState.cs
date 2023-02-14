@@ -7,6 +7,7 @@
         Betting,
         Playing,
         PendingPayout,
-        Finished
+        Finished,
+        Cancelled
     }
 }

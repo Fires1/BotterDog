@@ -54,7 +54,7 @@ namespace FiresStuff
                 _bank.Load();
                 //Re-register commands if any updates occur
                 await commands.RegisterCommandsToGuildAsync(752755222505586739, true); //Sam's Stuff
-                //await commands.RegisterCommandsToGuildAsync(537791310212628501, true); //Doggiedogs
+                await commands.RegisterCommandsToGuildAsync(537791310212628501, true); //Doggiedogs
                 await _client.Rest.DeleteAllGlobalCommandsAsync();
                 await _botLog.BotLogAsync(BotLogSeverity.Good, "Ready!", "Bot has been booted and is ready");
                 await _client.SetGameAsync("with butter", type: ActivityType.Playing); 

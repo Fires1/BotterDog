@@ -47,8 +47,9 @@ namespace BotterDog.Services
             _client.ModalSubmitted += RouletteModalSubmitted;
             _client.ButtonExecuted += RouletteButtonExecuted;
             //Link Custom Bet events
-            _client.ModalSubmitted += CustomModalSubmitted;
-            _client.ButtonExecuted += CustomButtonExecuted;
+            _client.ModalSubmitted += CustomBetCreated;
+            _client.ButtonExecuted += PlaceCustomBet;
+            _client.SelectMenuExecuted += CustomSelectMenuExecuted;
 
             _random = new Random();
 
@@ -161,9 +162,109 @@ namespace BotterDog.Services
                     _accounts.Save();
                     Save();
                     break;
+                case GameType.Custom:
+                    var finished = game as CustomState;
+
+                    var guild = _client.GetGuild(finished.Guild);
+                    var channel = guild.GetTextChannel(finished.Channel);
+                    var message = await channel.GetMessageAsync(finished.Message);
+                    await message.DeleteAsync();
+
+                     winningBets = new List<Bet>();
+
+                    foreach (var bet in finished.Bets)
+                    {
+                        if (bet.Hits.Contains(finished.Decided))
+                        {
+                            winningBets.Add(bet);
+                        }
+                    }
+
+                    var houseFee = decimal.Round(finished.Pot * 0.05m, 2);
+                    var endingPot = finished.Pot - houseFee;
+                    Pot += houseFee;
+
+                    var winners = "No one won :(";
+
+                    if (winningBets.Count > 0)
+                    {
+                        winners = "**Winners:**";
+                        foreach (var bet in winningBets)
+                        {
+                            winners += $"\r\n{bet.DisplayName} won ${decimal.Round(endingPot / winningBets.Count, 2)}";
+                            var account = _accounts.FindOrCreate(bet.Better).Value;
+                            account.ModifyBalance(decimal.Round(endingPot / winningBets.Count, 2));
+                        }
+                    }
+
+                    await msg.Channel.SendMessageAsync("", embed: new EmbedBuilder()
+                        .WithTitle($"{finished.Options[finished.Decided]} wins!")
+                        .WithDescription($"It has been decided that **{finished.Options[finished.Decided]}** wins.\r\nFinal Pot: **${endingPot}**\r\n{winners}")
+                        .WithColor(0, 255, 0)
+                        .WithFooter("To facilitate wagers, the house takes a 5% fee off the ending pot.")
+                        .Build());
+
+                    _accounts.Save();
+                    Save();
+
+                    break;
             }
 
             game.State = GameState.Finished;
+            FinishedGames.Add(game);
+            Games.Remove(game);
+        }
+
+        public async void CancelGame(IGamblingState game, SocketMessageComponent msg)
+        {
+            switch (game.GameType)
+            {
+                case GameType.Roulette:
+                     
+                    break;
+
+                case GameType.Custom:
+                    var finished = game as CustomState;
+
+                    var guild = _client.GetGuild(finished.Guild);
+                    var channel = guild.GetTextChannel(finished.Channel);
+                    var message = await channel.GetMessageAsync(finished.Message);
+                    await message.DeleteAsync();
+
+                    var houseFee = decimal.Round(finished.Pot * 0.05m, 2);
+                    var endingPot = finished.Pot - houseFee;
+                    Pot += houseFee;
+
+                    var alreadyMessaged = new List<ulong>();
+
+                    foreach (var bet in finished.Bets)
+                    {
+                        var account = _accounts.FindOrCreate(bet.Better).Value;
+                        account.ModifyBalance(decimal.Round(endingPot / finished.Bets.Count, 2));
+
+                        if (!alreadyMessaged.Contains(bet.Better))
+                        {
+                            alreadyMessaged.Add(bet.Better);
+                            try
+                            {
+                                var user = guild.GetUser(bet.Better);
+                                if (user != null)
+                                {
+                                    await user.SendMessageAsync($"The custom wager \"{finished.Title}\" has been cancelled. You have been refunded.");
+                                }
+                            }
+                            catch (Exception)
+                            {
+                                //swallow
+                            }
+                        }
+                    }
+                    _accounts.Save();
+                    Save();
+
+                    break;
+            }
+
             FinishedGames.Add(game);
             Games.Remove(game);
         }

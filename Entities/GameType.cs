@@ -5,6 +5,7 @@
     /// </summary>
     public enum GameType
     {
-        Roulette
+        Roulette,
+        Custom
     }
 }
