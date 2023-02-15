@@ -1,6 +1,6 @@
 ﻿namespace BotterDog.Entities
 {
-    public struct Bet
+    public class Bet
     {
         /// <summary>
         /// Discord ID of person placing the bet
