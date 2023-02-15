@@ -6,6 +6,7 @@
     public enum GameType
     {
         Roulette,
-        Custom
+        Custom,
+        HiLo
     }
 }

@@ -8,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Timers;
 
 namespace BotterDog.Services
@@ -50,6 +51,8 @@ namespace BotterDog.Services
             _client.ModalSubmitted += CustomBetCreated;
             _client.ButtonExecuted += PlaceCustomBet;
             _client.SelectMenuExecuted += CustomSelectMenuExecuted;
+            //Link Hi Lo events
+            _client.ButtonExecuted += PlaceHiLoBet;
 
             _random = new Random();
 
@@ -90,8 +93,6 @@ namespace BotterDog.Services
                 return Result.Failure(e.Message);
             }
         }
-
-      
 
         public async void Payout(IGamblingState game, SocketMessageComponent msg)
         {
@@ -215,6 +216,83 @@ namespace BotterDog.Services
             Games.Remove(game);
         }
 
+        //Process a player quitting
+        public async Task QuitHiLo(HiLoState game, ulong user)
+        {
+            game.QuitPlayers.Add(user);
+            game.CurrentPlayers.Remove(user);
+
+            if (!game.BustedPlayers.Contains(user))
+            {
+                //If they aren't busted, then let's pay them out.
+                var account = _accounts.FindOrCreate(user).Value;
+                var totalWon = decimal.Round(game.Bet * game.CurrentMultipliers[user], 2);
+                account.ModifyBalance(totalWon);
+                game.PaidOut.Add(user, totalWon); //Log payout amount
+                game.CurrentMultipliers.Remove(user);
+            }
+
+            //If no one is left, end the game.
+            if(!game.CurrentPlayers.Any())
+            {
+                await EndHiLoAsync(game);
+            }
+        }
+
+        //Handle ending the game
+        public async Task EndHiLoAsync(HiLoState game)
+        {
+            game.State = GameState.Finished; //Flag as finished
+
+            //Find time-out timer and clean up.
+            var timer = Timers.FirstOrDefault(x => x.GameId == game.Id);
+            if (timer != null)
+            {
+                timer.Stop();
+                Timers.Remove(timer);
+            }
+
+            string desc = "";
+
+            foreach (var player in game.CurrentPlayers)
+            {
+                //Pay out any current players.
+                var account = _accounts.FindOrCreate(player).Value;
+                var totalWon = decimal.Round(game.Bet * game.CurrentMultipliers[player], 2);
+                account.ModifyBalance(totalWon);
+                game.PaidOut.Add(player, totalWon);
+            }
+            foreach (var player in game.PaidOut)
+            {
+                desc += $"{game.Bets.First(x => x.Better == player.Key).DisplayName} won **${decimal.Round(player.Value, 2)}**.\r\n";
+            }
+            foreach (var player in game.BustedPlayers)
+            {
+                desc += $"{game.Bets.First(x => x.Better == player).DisplayName} **bust**.\r\n";
+            }
+
+            var emb = new EmbedBuilder()
+                .WithTitle("High Low Results")
+                .WithColor(new Color(40, 255, 40))
+                .WithDescription($"**Rounds Played:** {game.CurrentRound}\r\n**Bet:** ${game.Bet}\r\n**Last Card:** *{game.CurrentCard}*\r\n**Results:**\r\n{desc}");
+
+
+            var guild = _client.GetGuild(game.Guild);
+            var channel = guild.GetTextChannel(game.Channel);
+
+            //Delete game board
+            var msg = await channel.GetMessageAsync(game.Message);
+            await msg.DeleteAsync();
+
+            //Send results
+            await channel.SendMessageAsync(embed: emb.Build());
+
+            await _botLog.BotLogAsync(BotLogSeverity.Good, "High-Low game ended", $"{game.Id}\r\nr:{game.CurrentRound}\r\nbet: {game.Bet}\r\nplays :{game.Bets.Count}\r\nbusts {string.Join(",", game.BustedPlayers)}\r\npayouts: {string.Join(";", game.PaidOut.Select(x=> x.Key + "=" + x.Value).ToArray())}\r\n{game.Started}");
+
+            Games.Remove(game);
+            FinishedGames.Add(game);
+        }
+
         public async void CancelGame(IGamblingState game, SocketMessageComponent msg)
         {
             switch (game.GameType)
@@ -297,6 +375,45 @@ namespace BotterDog.Services
             game.State = GameState.PendingPayout;
             Payout(game, Msg);
             Timers.Remove((GameTimer)sender);
+        }
+
+        public void StartHiLoTimer(Guid Id, SocketMessageComponent Msg)
+        {
+            var game = Games.FirstOrDefault(x => x.Id == Id);
+            game.State = GameState.Playing;
+
+            var t = new GameTimer
+            {
+                Interval = 60 * 1000,
+                GameId = Id,
+                AutoReset = false,
+                Msg = Msg
+            };
+
+            t.Elapsed += HiLoTimerCompleted;
+            t.Start();
+            Timers.Add(t);
+        }
+
+        private async void HiLoTimerCompleted(object sender, ElapsedEventArgs e)
+        {
+            var Id = ((GameTimer)sender).GameId;
+            var Msg = ((GameTimer)sender).Msg;
+            var game = Games.FirstOrDefault(x => x.Id == Id) as HiLoState;
+            //If game times out, head to next round and end game.
+            game.NextRound();
+            await EndHiLoAsync(game);
+            Timers.Remove((GameTimer)sender);
+            await _botLog.BotLogAsync(BotLogSeverity.Meh, "High-Low game timed out", $"{game.Id}");
+
+        }
+
+        public void ResetHiLoTimer(Guid id)
+        {
+            //Reset if a bet is placed.
+            var timer = Timers.FirstOrDefault(x => x.GameId == id);
+            timer.Stop();
+            timer.Start();
         }
         #endregion
 
