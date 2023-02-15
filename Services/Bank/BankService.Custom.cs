@@ -69,7 +69,7 @@ namespace BotterDog.Services
             if (cleanDecider == "me" || cleanDecider == "myself")
             {
                 game.Decider = CustomDecider.Self;
-            } else if(cleanDecider == "topper dog" || cleanDecider == "top dog" || cleanDecider == "topper" || cleanDecider == "dog")
+            } else if(cleanDecider == "topper dawg" || cleanDecider == "top dawg" || cleanDecider == "topper" || cleanDecider == "dawg")
             {
                 game.Decider = CustomDecider.TopperDog;
             }
@@ -80,7 +80,7 @@ namespace BotterDog.Services
                 return;
             }
 
-            var deciderString = game.Decider == CustomDecider.Self ? $"{(arg.User as IGuildUser).DisplayName}" : "Topper Dog";
+            var deciderString = game.Decider == CustomDecider.Self ? $"{(arg.User as IGuildUser).DisplayName}" : "Topper Dawg";
             var embed = new EmbedBuilder()
                 .WithTitle(game.Title)
                 .WithColor(new Color(_random.Next(50, 255), _random.Next(50, 255), _random.Next(50, 255)))
