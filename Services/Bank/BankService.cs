@@ -217,23 +217,25 @@ namespace BotterDog.Services
         }
 
         //Process a player quitting
-        public async Task QuitHiLo(HiLoState game, ulong user)
+        public async Task QuitHiLo(HiLoState game, HiLoPlayer player)
         {
-            game.QuitPlayers.Add(user);
-            game.CurrentPlayers.Remove(user);
-
-            if (!game.BustedPlayers.Contains(user))
+            if (player.Status != HiLoPlayerStatus.Bust)
             {
                 //If they aren't busted, then let's pay them out.
-                var account = _accounts.FindOrCreate(user).Value;
-                var totalWon = decimal.Round(game.Bet * game.CurrentMultipliers[user], 2);
+                var account = _accounts.FindOrCreate(player.Id).Value;
+                var totalWon = decimal.Round(game.Bet * player.Multiplier, 2);
                 account.ModifyBalance(totalWon);
-                game.PaidOut.Add(user, totalWon); //Log payout amount
-                game.CurrentMultipliers.Remove(user);
+                player.HasPaidOut = true;
+                player.Payout = totalWon;
+                player.Status = HiLoPlayerStatus.Quit;
+            }
+            else
+            {
+                player.Status |= HiLoPlayerStatus.Quit;
             }
 
             //If no one is left, end the game.
-            if(!game.CurrentPlayers.Any())
+            if(!game.Players.Where(x => x.Status == HiLoPlayerStatus.Waiting || x.Status == HiLoPlayerStatus.PlacedBet).Any())
             {
                 await EndHiLoAsync(game);
             }
@@ -242,7 +244,7 @@ namespace BotterDog.Services
         //Handle ending the game
         public async Task EndHiLoAsync(HiLoState game)
         {
-            game.State = GameState.Finished; //Flag as finished
+            game.State = GameState.Finished;
 
             //Find time-out timer and clean up.
             var timer = Timers.FirstOrDefault(x => x.GameId == game.Id);
@@ -254,21 +256,34 @@ namespace BotterDog.Services
 
             string desc = "";
 
-            foreach (var player in game.CurrentPlayers)
+            foreach (var player in game.Players)
             {
-                //Pay out any current players.
-                var account = _accounts.FindOrCreate(player).Value;
-                var totalWon = decimal.Round(game.Bet * game.CurrentMultipliers[player], 2);
-                account.ModifyBalance(totalWon);
-                game.PaidOut.Add(player, totalWon);
-            }
-            foreach (var player in game.PaidOut)
-            {
-                desc += $"{game.Bets.First(x => x.Better == player.Key).DisplayName} won **${decimal.Round(player.Value, 2)}**.\r\n";
-            }
-            foreach (var player in game.BustedPlayers)
-            {
-                desc += $"{game.Bets.First(x => x.Better == player).DisplayName} **bust**.\r\n";
+                var account = _accounts.FindOrCreate(player.Id).Value;
+                var totalWon = decimal.Round(game.Bet * player.Multiplier, 2);
+                switch (player.Status)
+                {
+                    case HiLoPlayerStatus.Waiting:
+                        account.ModifyBalance(totalWon);
+                        player.HasPaidOut = true;
+                        player.Payout = totalWon;
+                        desc += $"{game.Bets.First(x => x.Better == player.Id).DisplayName} won **${decimal.Round(player.Payout.Value, 2)}**.\r\n";
+                        break;
+                    case HiLoPlayerStatus.PlacedBet:
+                        account.ModifyBalance(totalWon);
+                        player.HasPaidOut = true;
+                        player.Payout = totalWon;
+                        desc += $"{game.Bets.First(x => x.Better == player.Id).DisplayName} won **${decimal.Round(player.Payout.Value, 2)}**.\r\n";
+                        break;
+                    case HiLoPlayerStatus.Bust | HiLoPlayerStatus.Quit:
+                        desc += $"{game.Bets.First(x => x.Better == player.Id).DisplayName} **bust**.\r\n";
+                        break;
+                    case HiLoPlayerStatus.Bust:
+                        desc += $"{game.Bets.First(x => x.Better == player.Id).DisplayName} **bust**.\r\n";
+                        break;
+                    case HiLoPlayerStatus.Quit:
+                        desc += $"{game.Bets.First(x => x.Better == player.Id).DisplayName} won **${decimal.Round(player.Payout.Value, 2)}**.\r\n";
+                        break;
+                }
             }
 
             var emb = new EmbedBuilder()
@@ -287,7 +302,7 @@ namespace BotterDog.Services
             //Send results
             await channel.SendMessageAsync(embed: emb.Build());
 
-            await _botLog.BotLogAsync(BotLogSeverity.Good, "High-Low game ended", $"{game.Id}\r\nr:{game.CurrentRound}\r\nbet: {game.Bet}\r\nplays :{game.Bets.Count}\r\nbusts {string.Join(",", game.BustedPlayers)}\r\npayouts: {string.Join(";", game.PaidOut.Select(x=> x.Key + "=" + x.Value).ToArray())}\r\n{game.Started}");
+            await _botLog.BotLogAsync(BotLogSeverity.Good, "High-Low game ended", $"{game.Id}\r\nr:{game.CurrentRound}\r\nbet: {game.Bet}\r\nplays :{game.Bets.Count}\r\nbusts {string.Join(",", game.Players.Where(x=>(x.Status & HiLoPlayerStatus.Bust) != 0))}\r\npayouts: {string.Join(";", game.Players.Where(x=>x.HasPaidOut))}\r\n{game.Started}");
 
             Games.Remove(game);
             FinishedGames.Add(game);

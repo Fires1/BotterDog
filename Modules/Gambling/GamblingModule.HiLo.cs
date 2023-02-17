@@ -21,6 +21,7 @@ namespace BotterDog.Modules
             }
 
             var game = new HiLoState(Context.User.Id, GameType.HiLo, Bet);
+            game.Players.Add(new HiLoPlayer(accnt.Value));
 
             var ar = new ActionRowBuilder()
                 .WithButton($"Lower {BankService.CalculateHiLoOdds(game.CurrentCard.Number, false)}x", $"hilo-lo:{game.Id}", ButtonStyle.Success, emote: Emoji.Parse(":arrow_down:"))

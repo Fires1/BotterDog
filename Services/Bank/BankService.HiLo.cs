@@ -28,31 +28,51 @@ namespace BotterDog.Services
             //Find game
             if (!(Games.FirstOrDefault(x => x.Id == gameId) is HiLoState game)) { await arg.User.SendMessageAsync($"Game doesn't exist anymore."); await arg.DeferAsync(); return; }
 
+            var player = game.Players.FirstOrDefault(x => x.Id == arg.User.Id);
+
             //Find our "button choice"
             var choice = arg.Data.CustomId.Split(":").First();
 
             //Check if person has enough money and is not playing
             //This only applies to betting buttons
-            if (accnt.Balance <= game.Bet && !game.CurrentPlayers.Contains(arg.User.Id) && (choice != "hilo-quit" || choice != "hilo-next"))
+            if (accnt.Balance <= game.Bet && player == null && (choice != "hilo-quit" || choice != "hilo-next"))
             {
                 await arg.RespondAsync("You don't have enough money to place this bet.", ephemeral: true);
                 return;
             }
 
-            //Find existing bet if it exists and cancel out if it does.
-            var bet = game.Bets.FirstOrDefault(x => x.Hits[0] == game.CurrentRound && x.Better == arg.User.Id);
-            if(bet != null
-                && choice != "hilo-next") { await arg.RespondAsync($"You've already placed a bet for this round.", ephemeral:true);  return; }
+            if(player.Status == HiLoPlayerStatus.PlacedBet &&( choice == "hilo-lo" || choice == "hilo-hi"))
+            {
+                    await arg.RespondAsync($"You've already placed a bet for this round.", ephemeral: true);
+                    return;
+            }
 
             //See if our player has quit.
-            if(game.QuitPlayers.Contains(arg.User.Id) && choice != "hilo-quit") {await arg.RespondAsync($"You can't join a game you've already quit", ephemeral: true);  return;}
+            if(player.Status == HiLoPlayerStatus.Quit) {await arg.RespondAsync($"You can't join a game you've already quit", ephemeral: true);  return;}
 
-            //See if our player has busted, if they haven't, then they can't join if the game has already gone on for a round.
-            if (!game.BustedPlayers.Contains(arg.User.Id))
+            if(game.CurrentRound > 1 && player == null)
             {
-                if (game.CurrentRound > 1
-                    && !game.CurrentPlayers.Contains(arg.User.Id)
-                    && choice != "hilo-quit") { await arg.RespondAsync("You can't join a game that's already started.", ephemeral: true); return; }
+                await arg.RespondAsync("You can't join a game that's already started.", ephemeral: true); return;
+            }
+
+            //If we placed a bet, and we aren't a current player, let's pay the buy-in.
+            //We've already checked that we can afford this so we aren't going to check again.
+            if (choice == "hilo-lo" || choice == "hilo-hi")
+            {
+                if (player == null)
+                {
+                    player = new HiLoPlayer(accnt);
+                    game.Players.Add(player);
+                    accnt.Balance -= game.Bet;
+                    game.Pot += game.Bet;
+                }
+                if (player.Status == HiLoPlayerStatus.Bust)
+                {
+                    player.Status = HiLoPlayerStatus.PlacedBet;
+                    player.Multiplier = 1.0m;
+                    accnt.Balance -= game.Bet;
+                    game.Pot += game.Bet;
+                }
             }
 
             switch (choice)
@@ -63,6 +83,9 @@ namespace BotterDog.Services
                     //Add bet
                     game.Bets.Add(new Bet(arg.User.Id, arg.User.Username, game.Bet, CalculateHiLoOdds(game.CurrentCard.Number, false), new int[] { game.CurrentRound, 0 }));
                     ResetHiLoTimer(game.Id); //Reset timer
+                    player.Status = HiLoPlayerStatus.PlacedBet;
+
+                    await UpdateHiLo(arg, game);
                     break;
                 case "hilo-hi":
                     //Initialize time-out timer
@@ -70,15 +93,18 @@ namespace BotterDog.Services
                     //Add bet
                     game.Bets.Add(new Bet(arg.User.Id, arg.User.Username, game.Bet, CalculateHiLoOdds(game.CurrentCard.Number, true), new int[] { game.CurrentRound, 1 }));
                     ResetHiLoTimer(game.Id); //Reset timer
+                    player.Status = HiLoPlayerStatus.PlacedBet;
+
+                    await UpdateHiLo(arg, game);
                     break;
                 case "hilo-next":
                     #region HILONEXT
                     //Check to make sure everyone has placed bets for this round.
-                    if (game.Bets.Where(x=>x.Hits[0] == game.CurrentRound).Count() != game.CurrentPlayers.Count) { await arg.RespondAsync("Not every player has placed a bet yet", ephemeral: true); return; }
+                    if (game.Players.Where(x=>x.Status == HiLoPlayerStatus.Waiting).Count() > 0) { await arg.RespondAsync("Not every player has placed a bet yet", ephemeral: true); return; }
                     //Check to make sure the creator is the person pressing next.
                     if(game.Creator != arg.User.Id) { await arg.RespondAsync("You are not the creator of this game, therefore you cannot choose to move on. If 60 seconds passes and the game does not continue, the game will automatically pay out and end.", ephemeral: true); }
                     //Make sure atleast one bet exists.
-                    if (!game.Bets.Any()) { await arg.RespondAsync("You cannot continue without someone placing a bet.", ephemeral: true); return; }
+                    if (!game.Players.Where(x=>x.Status == HiLoPlayerStatus.PlacedBet).Any()) { await arg.RespondAsync("You cannot continue without someone placing a bet.", ephemeral: true); return; }
                    
                     //Cycle next round.
                     game.NextRound();
@@ -127,31 +153,29 @@ namespace BotterDog.Services
                             emb.Fields.RemoveAll(x => playerFields.Contains(x));
                         }
                         //Still playing
-                        foreach (var player in game.CurrentPlayers)
+                        foreach (var player in game.Players.OrderBy(x=>x.Status))
                         {
-                            emb.Fields.Add(new EmbedFieldBuilder()
-                                .WithName($"{game.Bets.First(x => x.Better == player).DisplayName}")
-                                .WithValue($"${decimal.Round(game.Bet * game.CurrentMultipliers[player], 2)} ({decimal.Round(game.CurrentMultipliers[player],2)}x)")
-                                .WithIsInline(true)
-                                );
-                        }
-                        //Bust
-                        foreach (var player in game.BustedPlayers)
-                        {
-                            emb.Fields.Add(new EmbedFieldBuilder()
-                                .WithName($"{game.Bets.First(x => x.Better == player).DisplayName}")
-                                .WithValue($"BUST")
-                                .WithIsInline(true)
-                                );
-                        }
-                        //Qiot
-                        foreach (var player in game.QuitPlayers)
-                        {
-                            emb.Fields.Add(new EmbedFieldBuilder()
-                                .WithName($"{game.Bets.First(x => x.Better == player).DisplayName}")
-                                .WithValue($"QUIT")
-                                .WithIsInline(true)
-                                );
+                            var e = new EmbedFieldBuilder()
+                                .WithName($"{game.Bets.First(x => x.Better == player.Id).DisplayName}")
+                                .WithIsInline(true);
+
+                            switch(player.Status)
+                            {
+                                case HiLoPlayerStatus.Waiting:
+                                    e.WithValue($"${decimal.Round(game.Bet * player.Multiplier, 2)} ({decimal.Round(player.Multiplier, 2)}x)");
+                                    break;
+                                case HiLoPlayerStatus.PlacedBet:
+                                    e.WithValue($"${decimal.Round(game.Bet * player.Multiplier, 2)} ({decimal.Round(player.Multiplier, 2)}x)");
+                                    break;
+                                case HiLoPlayerStatus.Bust:
+                                    e.WithValue("BUST");
+                                    break;
+                                case HiLoPlayerStatus.Quit:
+                                    e.WithValue("QUIT");
+                                    break;
+                            }
+
+                            emb.Fields.Add(e);
                         }
                         x.Embed = emb.Build();
 
@@ -164,8 +188,15 @@ namespace BotterDog.Services
                 #endregion
                 case "hilo-quit":
                     #region HILOQUIT
+
+                    if(player == null)
+                    {
+                        await arg.RespondAsync("You are not a member of this game.", ephemeral: true);
+                        return;
+                    }
+
                     //We are quitting.
-                    await QuitHiLo(game, arg.User.Id);
+                    await QuitHiLo(game, player);
                     //If everyone has quit, end this process.
                     if (game.State == GameState.Finished)
                     {
@@ -181,69 +212,48 @@ namespace BotterDog.Services
                         {
                             emb.Fields.RemoveAll(x => playerFields.Contains(x));
                         }
-                        foreach (var player in game.CurrentPlayers)
+                        foreach (var player in game.Players.OrderBy(x => x.Status))
                         {
-                            emb.Fields.Add(new EmbedFieldBuilder()
-                                .WithName($"{game.Bets.First(x => x.Better == player).DisplayName}")
-                                .WithValue($"${decimal.Round(game.Bet * game.CurrentMultipliers[player], 2)} ({decimal.Round(game.CurrentMultipliers[player], 2)}x)")
-                                .WithIsInline(true)
-                                );
+                            var e = new EmbedFieldBuilder()
+                                .WithName($"{game.Bets.First(x => x.Better == player.Id).DisplayName}")
+                                .WithIsInline(true);
+
+                            switch (player.Status)
+                            {
+                                case HiLoPlayerStatus.Waiting:
+                                    e.WithValue($"${decimal.Round(game.Bet * player.Multiplier, 2)} ({decimal.Round(player.Multiplier, 2)}x)");
+                                    break;
+                                case HiLoPlayerStatus.PlacedBet:
+                                    e.WithValue($"${decimal.Round(game.Bet * player.Multiplier, 2)} ({decimal.Round(player.Multiplier, 2)}x)");
+                                    break;
+                                case HiLoPlayerStatus.Bust:
+                                    e.WithValue("BUST");
+                                    break;
+                                case HiLoPlayerStatus.Quit:
+                                    e.WithValue("QUIT");
+                                    break;
+                            }
+                            emb.Fields.Add(e);
                         }
-                        foreach (var player in game.BustedPlayers)
-                        {
-                            emb.Fields.Add(new EmbedFieldBuilder()
-                                .WithName($"{game.Bets.First(x => x.Better == player).DisplayName}")
-                                .WithValue($"BUST")
-                                .WithIsInline(true)
-                                );
-                        }
-                        foreach (var player in game.QuitPlayers.Where(x => !game.BustedPlayers.Contains(x)).ToList())
-                        {
-                            emb.Fields.Add(new EmbedFieldBuilder()
-                                .WithName($"{game.Bets.First(x => x.Better == player).DisplayName}")
-                                .WithValue($"QUIT")
-                                .WithIsInline(true)
-                                );
-                        }
+
                         x.Embed = emb.Build();
                     });
 
                     //Notify players.
-                    if (game.BustedPlayers.Contains(arg.User.Id))
+                    if ((player.Status & HiLoPlayerStatus.Bust) != 0)
                     {
                         await arg.Channel.SendMessageAsync($"{arg.User.Mention} has bust, then quit.");
                         return;
                     }
                     else
                     {
-                        await arg.Channel.SendMessageAsync($"{arg.User.Mention} has quit for a payout of **${decimal.Round(game.PaidOut[arg.User.Id], 2)}** doggy dawg bucks.");
+                        await arg.Channel.SendMessageAsync($"{arg.User.Mention} has quit for a payout of **${decimal.Round(player.Payout.Value, 2)}** doggy dawg bucks.");
                         return;
                     }
                 #endregion
                 case "hilo-tie":
                     //Maybe some day
                     throw new NotImplementedException();
-            }
-
-            //If we placed a bet, and we aren't a current player, let's pay the buy-in.
-            //We've already checked that we can afford this so we aren't going to check again.
-            if(choice == "hilo-lo" || choice == "hilo-hi" && !game.CurrentPlayers.Contains(arg.User.Id))
-            {
-                //If we are busted, the player is buying back in so let's remove them off that list.
-                if(game.BustedPlayers.Contains(arg.User.Id))
-                {
-                    game.BustedPlayers.Remove(arg.User.Id);
-                }
-                accnt.Balance -= game.Bet;
-                game.Pot += game.Bet;
-
-                game.CurrentPlayers.Add(arg.User.Id);
-                game.CurrentMultipliers.Add(arg.User.Id, 1.0M);
-            }
-
-            if (choice != "hilo-next" || choice != "hilo-quit")
-            {
-                await UpdateHiLo(arg, game);
             }
             _accounts.Save();
         }
@@ -342,30 +352,30 @@ namespace BotterDog.Services
                 {
                     emb.Fields.RemoveAll(x => playerFields.Contains(x));
                 }
-                foreach (var player in game.CurrentPlayers)
+                foreach (var player in game.Players.OrderBy(x => x.Status))
                 {
-                    emb.Fields.Add(new EmbedFieldBuilder()
-                        .WithName($"{game.Bets.First(x => x.Better == player).DisplayName}")
-                        .WithValue($"${decimal.Round(game.Bet * game.CurrentMultipliers[player], 2)} ({decimal.Round(game.CurrentMultipliers[player], 2)}x)")
-                        .WithIsInline(true)
-                        );
+                    var e = new EmbedFieldBuilder()
+                        .WithName($"{game.Bets.First(x => x.Better == player.Id).DisplayName}")
+                        .WithIsInline(true);
+
+                    switch (player.Status)
+                    {
+                        case HiLoPlayerStatus.Waiting:
+                            e.WithValue($"${decimal.Round(game.Bet * player.Multiplier, 2)} ({decimal.Round(player.Multiplier, 2)}x)");
+                            break;
+                        case HiLoPlayerStatus.PlacedBet:
+                            e.WithValue($"${decimal.Round(game.Bet * player.Multiplier, 2)} ({decimal.Round(player.Multiplier, 2)}x)");
+                            break;
+                        case HiLoPlayerStatus.Bust:
+                            e.WithValue("BUST");
+                            break;
+                        case HiLoPlayerStatus.Quit:
+                            e.WithValue("QUIT");
+                            break;
+                    }
+                    emb.Fields.Add(e);
                 }
-                foreach (var player in game.BustedPlayers)
-                {
-                    emb.Fields.Add(new EmbedFieldBuilder()
-                        .WithName($"{game.Bets.First(x => x.Better == player).DisplayName}")
-                        .WithValue($"BUST")
-                        .WithIsInline(true)
-                        );
-                }
-                foreach (var player in game.QuitPlayers)
-                {
-                    emb.Fields.Add(new EmbedFieldBuilder()
-                        .WithName($"{game.Bets.First(x => x.Better == player).DisplayName}")
-                        .WithValue($"QUIT")
-                        .WithIsInline(true)
-                        );
-                }
+
 
 
                 x.Embed = emb.Build();
