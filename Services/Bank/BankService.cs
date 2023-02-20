@@ -217,7 +217,7 @@ namespace BotterDog.Services
         }
 
         //Process a player quitting
-        public async Task QuitHiLo(HiLoState game, HiLoPlayer player)
+        public async Task<bool> QuitHiLo(HiLoState game, HiLoPlayer player)
         {
             if (player.Status != HiLoPlayerStatus.Bust)
             {
@@ -225,20 +225,34 @@ namespace BotterDog.Services
                 var account = _accounts.FindOrCreate(player.Id).Value;
                 var totalWon = decimal.Round(game.Bet * player.Multiplier, 2);
                 account.ModifyBalance(totalWon);
+                Pot -= totalWon;
                 player.HasPaidOut = true;
                 player.Payout = totalWon;
                 player.Status = HiLoPlayerStatus.Quit;
+                _accounts.Save();
+                Save();
             }
             else
             {
                 player.Status |= HiLoPlayerStatus.Quit;
             }
 
+            var remainingPlayers = game.Players.Where(x => x.Status != HiLoPlayerStatus.Quit);
+
             //If no one is left, end the game.
-            if(!game.Players.Where(x => x.Status == HiLoPlayerStatus.Waiting || x.Status == HiLoPlayerStatus.PlacedBet).Any())
+            if (!remainingPlayers.Any())
             {
                 await EndHiLoAsync(game);
+                return true;
             }
+            if (player.Id == game.Creator)
+            {
+                var newCreator = remainingPlayers.First(x=>x.Id != player.Id);
+                game.Creator = newCreator.Id;
+                var user = _client.GetUser(game.Creator);
+                await user.SendMessageAsync("The creator of a game of High-Low you are a player in has quit, you are now the new creator and are responsible for selecting 'Next Card'.");
+            }
+            return false;
         }
 
         //Handle ending the game
@@ -256,7 +270,7 @@ namespace BotterDog.Services
 
             string desc = "";
 
-            foreach (var player in game.Players)
+            foreach (var player in game.Players.OrderBy(x=> x.Status))
             {
                 var account = _accounts.FindOrCreate(player.Id).Value;
                 var totalWon = decimal.Round(game.Bet * player.Multiplier, 2);
@@ -266,12 +280,14 @@ namespace BotterDog.Services
                         account.ModifyBalance(totalWon);
                         player.HasPaidOut = true;
                         player.Payout = totalWon;
+                        Pot -= totalWon;
                         desc += $"{game.Bets.First(x => x.Better == player.Id).DisplayName} won **${decimal.Round(player.Payout.Value, 2)}**.\r\n";
                         break;
                     case HiLoPlayerStatus.PlacedBet:
                         account.ModifyBalance(totalWon);
                         player.HasPaidOut = true;
                         player.Payout = totalWon;
+                        Pot -= totalWon;
                         desc += $"{game.Bets.First(x => x.Better == player.Id).DisplayName} won **${decimal.Round(player.Payout.Value, 2)}**.\r\n";
                         break;
                     case HiLoPlayerStatus.Bust | HiLoPlayerStatus.Quit:
@@ -285,6 +301,7 @@ namespace BotterDog.Services
                         break;
                 }
             }
+
 
             var emb = new EmbedBuilder()
                 .WithTitle("High Low Results")
@@ -306,6 +323,8 @@ namespace BotterDog.Services
 
             Games.Remove(game);
             FinishedGames.Add(game);
+            _accounts.Save();
+            Save();
         }
 
         public async void CancelGame(IGamblingState game, SocketMessageComponent msg)
